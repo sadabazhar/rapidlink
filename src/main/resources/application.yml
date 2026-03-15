@@ -1,0 +1,49 @@
+# Application & Environment Settings
+
+spring:
+  application:
+    name: rapidlink
+
+  # DataSource configuration
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rapidlink
+    username: rapidlink_user
+    password: rapidlink_password
+    driver-class-name: org.postgresql.Driver
+
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+
+  # JPA & Hibernate
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: Asia/Kolkata
+
+  # JSON Serialization timezone
+  jackson:
+    time-zone: Asia/Kolkata
+
+  # Database Migration (Flyway)
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+# Logging configuration
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
