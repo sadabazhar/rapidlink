@@ -6,6 +6,7 @@ import com.rapidlink.util.ShortCodeGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -18,6 +19,7 @@ public class ShortUrlService {
     private final ShortCodeGenerator generator;
 
     // Creates a short URL for the given original URL
+    @Transactional
     public String createShortUrl(String originalUrl) {
 
         log.info("Creating short URL for originalUrl={}", originalUrl);
@@ -38,6 +40,7 @@ public class ShortUrlService {
     }
 
     // Resolves short code with original URL and tracks click
+    @Transactional // TODO: Temporary for MVP. Replace with Redis-based counter + async persistence to avoid transaction overhead and row-level contention under high traffic.
     public String resolveAndTrack(String shortCode) {
 
         ShortUrl url = repository.findByShortCode(shortCode)
