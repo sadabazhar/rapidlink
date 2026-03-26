@@ -1,6 +1,7 @@
 package com.rapidlink.controller;
 
 import com.rapidlink.dto.request.CreateShortUrlRequest;
+import com.rapidlink.dto.response.CreatedShortUrlResponse;
 import com.rapidlink.services.ShortUrlService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,9 +19,9 @@ public class ShortUrlController {
 
     // Creates a new short URL
     @PostMapping
-    public ResponseEntity<String> create(@Valid @RequestBody CreateShortUrlRequest request){
+    public ResponseEntity<CreatedShortUrlResponse> create(@Valid @RequestBody CreateShortUrlRequest request){
         String shortCode = service.createShortUrl(request.getUrl());
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(shortCode);
+                .body(new CreatedShortUrlResponse(shortCode));
     }
 }
