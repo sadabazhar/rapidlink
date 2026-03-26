@@ -1,10 +1,7 @@
 package com.rapidlink.services;
 
 import com.rapidlink.entity.ShortUrl;
-import com.rapidlink.exception.BadRequestException;
-import com.rapidlink.exception.ShortUrlNotFoundException;
-import com.rapidlink.exception.UrlDeactivatedException;
-import com.rapidlink.exception.UrlExpiredException;
+import com.rapidlink.exception.*;
 import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.util.ShortCodeGenerator;
 import lombok.RequiredArgsConstructor;
@@ -29,10 +26,11 @@ public class ShortUrlService {
         log.info("Creating short URL for originalUrl={}", originalUrl);
 
         String shortCode = generateUniqueCode();
+        URI validatedUri = validateAndNormalizeUrl(originalUrl);
 
         ShortUrl url = ShortUrl.builder()
                 .shortCode(shortCode)
-                .originalUrl(originalUrl)
+                .originalUrl(validatedUri.toString())
                 .isActive(true)
                 .clickCount(0L)
                 .build();
@@ -65,7 +63,7 @@ public class ShortUrlService {
             return URI.create(url.getOriginalUrl());
         } catch (IllegalArgumentException ex) {
             log.error("Invalid URL stored in DB: shortCode={}", shortCode);
-            throw new BadRequestException("Invalid stored URL");
+            throw new InvalidStoredUrlException(shortCode);
         }
     }
 
@@ -93,6 +91,24 @@ public class ShortUrlService {
 
             log.warn("Attempt to access expired URL: shortCode={}", url.getShortCode());
             throw new UrlExpiredException("Short URL is expired, with this shortcode : " + url.getShortCode());
+        }
+    }
+
+    // Parses and validates the input URL; allows only HTTP/HTTPS and rejects malformed URLs
+    private URI validateAndNormalizeUrl(String originalUrl) {
+        try {
+            URI uri = URI.create(originalUrl);
+
+            String scheme = uri.getScheme();
+            if (scheme == null ||
+                    !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+                throw new BadRequestException("Only HTTP/HTTPS URLs are allowed");
+            }
+
+            return uri;
+
+        } catch (IllegalArgumentException ex) {
+            throw new BadRequestException("Invalid URL format");
         }
     }
 
