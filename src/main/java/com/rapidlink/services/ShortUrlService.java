@@ -96,13 +96,27 @@ public class ShortUrlService {
 
     // Parses and validates the input URL; allows only HTTP/HTTPS and rejects malformed URLs
     private URI validateAndNormalizeUrl(String originalUrl) {
+
+        // Defensive null/blank check (DTO validation may not always apply)
+        if (originalUrl == null || originalUrl.isBlank()) {
+            throw new BadRequestException("URL must not be empty");
+        }
+
+
         try {
             URI uri = URI.create(originalUrl);
 
+            // Validate scheme (only HTTP/HTTPS allowed)
             String scheme = uri.getScheme();
             if (scheme == null ||
                     !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
                 throw new BadRequestException("Only HTTP/HTTPS URLs are allowed");
+            }
+
+            // Validate host presence (required for proper redirection)
+            String host = uri.getHost();
+            if (host == null || host.isBlank()) {
+                throw new BadRequestException("Invalid URL: host is missing");
             }
 
             return uri;
