@@ -22,6 +22,9 @@ public class ShortUrl {
     @Column(nullable = false, updatable = false)
     private UUID id;
 
+    @Column(name = "seq_id", nullable = false, unique = true)
+    private Long seqId;
+
     @Column(name = "short_code", nullable = false, unique = true, length = 10)
     private String shortCode;
 
@@ -39,9 +42,11 @@ public class ShortUrl {
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;
 
+    @Builder.Default
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
+    @Builder.Default
     @Column(name = "click_count", nullable = false)
     private Long clickCount = 0L;
 }
