@@ -8,6 +8,7 @@ import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.net.URI;
@@ -29,7 +30,11 @@ public class ShortUrlService {
 
         URI validatedUri = validateAndNormalizeUrl(originalUrl);
 
-        long seqId = repository.nextSeqId();
+        Long seqId = repository.nextSeqId();
+
+        if (seqId == null) {
+            throw new ShortCodeGenerationException("Sequence returned null");
+        }
 
         // TODO: Current implementation is predictable (seq_id → Base62).
         // Consider adding obfuscation (e.g., hashing or ID scrambling)
