@@ -1,11 +1,14 @@
 package com.rapidlink.services;
 
+import com.rapidlink.encoder.Base62Encoder;
 import com.rapidlink.entity.ShortUrl;
 import com.rapidlink.exception.*;
 import com.rapidlink.repository.ShortUrlRepository;
-import com.rapidlink.util.ShortCodeGenerator;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.net.URI;
@@ -17,7 +20,7 @@ import java.time.LocalDateTime;
 public class ShortUrlService {
 
     private final ShortUrlRepository repository;
-    private final ShortCodeGenerator generator;
+    private final EntityManager entityManager;
 
     // Creates a short URL for the given original URL
     @Transactional
@@ -25,19 +28,35 @@ public class ShortUrlService {
 
         log.info("Creating short URL for originalUrl={}", originalUrl);
 
-        String shortCode = generateUniqueCode();
         URI validatedUri = validateAndNormalizeUrl(originalUrl);
 
+        Long seqId = repository.nextSeqId();
+
+        if (seqId == null) {
+            throw new ShortCodeGenerationException("Sequence returned null");
+        }
+
+        // TODO: Current implementation is predictable (seq_id → Base62).
+        // Consider adding obfuscation (e.g., hashing or ID scrambling)
+        // to prevent enumeration attacks in public URLs.
+        String shortCode = Base62Encoder.encode(seqId);
+
         ShortUrl url = ShortUrl.builder()
-                .shortCode(shortCode)
                 .originalUrl(validatedUri.toString())
+                .seqId(seqId)
+                .shortCode(shortCode)
                 .isActive(true)
                 .clickCount(0L)
                 .build();
 
-        repository.save(url);
-        log.info("Short URL created successfully: shortCode={}", shortCode);
+        try {
+            repository.save(url);
+        } catch (DataIntegrityViolationException ex) {
+            log.error("Unexpected DB error during short URL creation", ex);
+            throw new ShortCodeGenerationException();
+        }
 
+        log.info("Short URL created successfully: shortCode={}", shortCode);
         return shortCode;
     }
 
@@ -53,7 +72,13 @@ public class ShortUrlService {
 
         validateUrl(url);
 
-        incrementClickCount(url);
+        /*
+         * Increments click count (basic implementation)
+         * TODO: Replace with async/event-based tracking for high scale
+         */
+        url.setClickCount(
+                url.getClickCount() == null ? 1 : url.getClickCount() + 1
+        );
 
         log.info("Redirecting shortCode={} (clickCount={})",
                 shortCode, url.getClickCount());
@@ -68,15 +93,6 @@ public class ShortUrlService {
     }
 
 
-    // Generates unique short code with retry on collision
-    private String generateUniqueCode() {
-        String code;
-        do {
-            code = generator.generate();
-        } while (repository.existsByShortCode(code));
-
-        return code;
-    }
 
     // Validates if URL is active and not expired
     private void validateUrl(ShortUrl url) {
@@ -126,12 +142,4 @@ public class ShortUrlService {
         }
     }
 
-    /**
-     * Increments click count (basic implementation)
-     * TODO: Replace with async/event-based tracking for high scale
-     */
-    private void incrementClickCount(ShortUrl url) {
-        url.setClickCount(url.getClickCount() + 1);
-        repository.save(url);
-    }
 }
