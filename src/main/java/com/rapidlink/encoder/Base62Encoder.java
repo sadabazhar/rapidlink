@@ -39,6 +39,11 @@ public final class Base62Encoder {
     // Converts a numeric value into a Base62 encoded string
     public static String encode(long value) {
 
+        // Validate input
+        if (value < 0) {
+            throw new IllegalArgumentException("Value must be non-negative");
+        }
+
         // Edge case: if value is 0, directly return "0"
         if (value == 0) return "0";
 
