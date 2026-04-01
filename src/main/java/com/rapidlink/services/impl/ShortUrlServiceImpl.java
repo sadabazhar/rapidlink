@@ -33,7 +33,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
     @Transactional
     public String createShortUrl(String originalUrl) {
 
-        log.info("Creating short URL for originalUrl={}", originalUrl);
+        log.info("Creating short URL request received");
 
         URI validatedUri = validateAndNormalizeUrl(originalUrl);
         String normalizedUrl = validatedUri.toString();
@@ -57,7 +57,9 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 .build();
 
         try {
-            repository.save(url);
+            // Force immediate DB flush so constraint violations are thrown here
+            // (otherwise exceptions occur at transaction commit, outside this try-catch)
+            repository.saveAndFlush(url);
         } catch (DataIntegrityViolationException ex) {
             log.error("DB constraint violation during short URL creation — shortCode={}", shortCode, ex);
             throw new ShortCodeGenerationException();
@@ -71,7 +73,6 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                     @Override
                     public void afterCommit() {
                         cacheService.save(shortCode, normalizedUrl);
-                        log.info("Cache warmed after commit — shortCode={}", shortCode);
                     }
                 }
         );
@@ -87,14 +88,18 @@ public class ShortUrlServiceImpl implements ShortUrlService {
 
         //1. Cache check
         Optional<String> cached = cacheService.get(shortCode);
-
         if (cached.isPresent()) {
-            log.info("Cache HIT — shortCode={}, redirecting", shortCode);
+
+            log.info("Cache HIT — shortCode={}", shortCode);
             try {
 
-                // TODO: Click tracking is skipped on cache hits.
-                // Fix: use Redis INCR for atomic counter, flush to DB async via scheduler.
-                return URI.create(cached.get());
+                URI uri = URI.create(cached.get());
+
+                // TEMP click tracking (atomic DB update)
+                // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
+                repository.incrementClickCountByShortCode(shortCode);
+
+                return uri;
             } catch (IllegalArgumentException ex) {
 
                 log.error("Corrupted URL in cache, evicting — shortCode={}", shortCode);
@@ -104,7 +109,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         }
 
         // 2. If cache miss, DB lookup
-        log.info("Cache MISS — querying DB for shortCode={}", shortCode);
+        log.info("Cache MISS — shortCode={}, querying DB", shortCode);
 
         ShortUrl url = repository.findByShortCode(shortCode)
                 .orElseThrow(() -> {
@@ -118,16 +123,18 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         // 4. Caches the URL with a TTL aligned to its expiry
         cacheWithAlignedTtl(shortCode, url);
 
-        // 5. Track click
-        // TODO: Replace with Redis INCR + async DB flush for high-traffic scale
-        url.setClickCount(url.getClickCount() == null ? 1 : url.getClickCount() + 1);
-        log.info("Redirecting shortCode={} (clickCount={})", shortCode, url.getClickCount());
-
-        // 6. Build and return URI
+        // 5. Build and return URI
         try {
-            return URI.create(url.getOriginalUrl());
+            URI uri =  URI.create(url.getOriginalUrl());
+
+            // 6. TEMP click tracking (atomic DB update)
+            // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
+            repository.incrementClickCountByShortCode(shortCode);
+            log.info("Redirecting — shortCode={}", shortCode);
+
+            return uri;
         } catch (IllegalArgumentException ex) {
-            log.error("Invalid URL stored in DB: shortCode={}", shortCode);
+            log.error("Invalid URL stored in DB — shortCode={}, url={}", shortCode, url.getOriginalUrl());
             throw new InvalidStoredUrlException(shortCode);
         }
     }
