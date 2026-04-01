@@ -1,6 +1,5 @@
 package com.rapidlink.controller;
 
-import com.rapidlink.exception.BadRequestException;
 import com.rapidlink.services.ShortUrlService;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -20,7 +19,7 @@ public class RedirectController {
     @GetMapping("/{shortCode}")
     public ResponseEntity<Void> redirect(@PathVariable String shortCode) {
 
-        URI uri = service.resolveAndTrack(shortCode);
+        URI uri = service.resolveUrl(shortCode);
 
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(uri)
