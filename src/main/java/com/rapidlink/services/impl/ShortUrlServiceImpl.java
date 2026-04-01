@@ -153,23 +153,44 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         // Validate before serving or caching
         validateUrl(url);
 
-        // Caches the URL with a TTL aligned to its expiry
-        cacheWithAlignedTtl(shortCode, url);
-
-        // Build and return URI
+        // Build URI FIRST (avoid caching invalid URL)
+        URI uri;
         try {
-            URI uri =  URI.create(url.getOriginalUrl());
-
-            // TEMP click tracking (atomic DB update)
-            // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
-            repository.incrementClickCountIfActive(shortCode);      // only if still valid
-            log.info("Redirecting — shortCode={}", shortCode);
-
-            return uri;
+            uri = URI.create(url.getOriginalUrl());
         } catch (IllegalArgumentException ex) {
             log.error("Invalid URL stored in DB — shortCode={}, url={}", shortCode, url.getOriginalUrl());
             throw new InvalidStoredUrlException(shortCode);
         }
+
+        // 3. FINAL DB check (atomic)
+        int updated = repository.incrementClickCountIfActive(shortCode);
+
+        if (updated == 0) {
+            // Race condition detected (became invalid after validateUrl)
+
+            log.warn("URL became inactive/expired during request — shortCode={}, falling back to latest DB state", shortCode);
+
+            // Re-fetch latest state and throw correct error
+            ShortUrl latest = repository.findByShortCode(shortCode)
+                    .orElseThrow(() -> new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode));
+
+            validateUrl(latest); // throws if invalid
+
+            // Rebuild URI from latest
+            try {
+                uri = URI.create(latest.getOriginalUrl());
+            } catch (IllegalArgumentException ex) {
+                throw new InvalidStoredUrlException(shortCode);
+            }
+
+            url = latest; // ensure caching uses latest
+        }
+
+        // Caches the URL ONLY after everything is valid with a TTL aligned to its expiry
+        cacheWithAlignedTtl(shortCode, url);
+
+        log.info("Redirecting — shortCode={}", shortCode);
+        return uri;
     }
 
     /**
