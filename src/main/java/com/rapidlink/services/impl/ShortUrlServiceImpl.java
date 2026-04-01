@@ -86,7 +86,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
     @Transactional // TODO: Temporary for MVP. Replace with Redis-based counter + async persistence to avoid transaction overhead and row-level contention under high traffic.
     public URI resolveUrl(String shortCode) {
 
-        //1. Cache check
+        // Cache check
         Optional<String> cached = cacheService.get(shortCode);
         if (cached.isPresent()) {
 
@@ -97,9 +97,21 @@ public class ShortUrlServiceImpl implements ShortUrlService {
 
                 // TEMP click tracking (atomic DB update)
                 // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
-                repository.incrementClickCountByShortCode(shortCode);
+
+                // (URL might be deactivated or expired). In that case, remove stale cache
+                // and fallback to DB to get the correct state.
+                int updated = repository.incrementClickCountIfActive(shortCode);
+
+                if (updated == 0) {
+
+                    cacheService.delete(shortCode);
+
+                    log.warn("Stale cache detected — shortCode={}, falling back to DB", shortCode);
+                    return resolveUrlFromDb(shortCode);    // ensure we return correct result
+                }
 
                 return uri;
+
             } catch (IllegalArgumentException ex) {
 
                 log.error("Corrupted URL in cache, evicting — shortCode={}", shortCode);
@@ -108,28 +120,49 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             }
         }
 
-        // 2. If cache miss, DB lookup
+        //  If cache miss, DB lookup
         log.info("Cache MISS — shortCode={}, querying DB", shortCode);
+        return resolveUrlFromDb(shortCode);
+    }
 
+
+    // -------- Helper Methods --------
+
+    /**
+     * Fetches the original URL from the database and prepares it for redirect.
+     *
+     * Steps:
+     * 1. Retrieve URL from DB using shortCode (throw error if not found)
+     * 2. Validate that URL is active and not expired
+     * 3. Store it in cache for faster future access (with proper TTL)
+     * 4. Convert original URL string into URI
+     * 5. Increment click count in DB (only if still valid)
+     * 6. Return URI for redirection
+     *
+     * Note:
+     * - Used when cache miss occurs or cache is stale
+     * - Acts as the source of truth (DB is always trusted over cache)
+     */
+    private URI resolveUrlFromDb(String shortCode){
         ShortUrl url = repository.findByShortCode(shortCode)
                 .orElseThrow(() -> {
                     log.warn("Short URL not found for shortCode={}", shortCode);
                     return new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode);
                 });
 
-        // 3. Validate before serving or caching
+        // Validate before serving or caching
         validateUrl(url);
 
-        // 4. Caches the URL with a TTL aligned to its expiry
+        // Caches the URL with a TTL aligned to its expiry
         cacheWithAlignedTtl(shortCode, url);
 
-        // 5. Build and return URI
+        // Build and return URI
         try {
             URI uri =  URI.create(url.getOriginalUrl());
 
-            // 6. TEMP click tracking (atomic DB update)
+            // TEMP click tracking (atomic DB update)
             // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
-            repository.incrementClickCountByShortCode(shortCode);
+            repository.incrementClickCountIfActive(shortCode);      // only if still valid
             log.info("Redirecting — shortCode={}", shortCode);
 
             return uri;
@@ -138,9 +171,6 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             throw new InvalidStoredUrlException(shortCode);
         }
     }
-
-
-    // -------- Helper Methods --------
 
     /**
      * Caches the URL with a TTL aligned to its expiry:
