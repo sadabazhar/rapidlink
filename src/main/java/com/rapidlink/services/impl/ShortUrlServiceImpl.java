@@ -27,6 +27,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
     private final ShortUrlRepository repository;
     private final UrlCacheService cacheService;
     private static final long MIN_CACHE_TTL_SECONDS = 5;
+    private static final int MAX_URL_LENGTH = 2048;
 
     // Creates a short URL for the given original URL
     @Override
@@ -65,17 +66,8 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             throw new ShortCodeGenerationException();
         }
 
-        // Write-through cache warm — registered AFTER repository.save() but only
-        // fires AFTER the surrounding @Transactional commits.
-        // This prevents caching a URL whose DB write later rolls back (ghost cache entry).
-        TransactionSynchronizationManager.registerSynchronization(
-                new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        cacheService.save(shortCode, normalizedUrl);
-                    }
-                }
-        );
+        // Write-through cache warm — fires only AFTER @Transactional commits
+        registerCacheAfterCommit(shortCode, normalizedUrl);
 
         log.info("Short URL created successfully: shortCode={}", shortCode);
         return shortCode;
@@ -91,104 +83,81 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         if (cached.isPresent()) {
 
             log.info("Cache HIT — shortCode={}", shortCode);
-            try {
-
-                URI uri = URI.create(cached.get());
-
-                // TEMP click tracking (atomic DB update)
-                // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
-
-                // (URL might be deactivated or expired). In that case, remove stale cache
-                // and fallback to DB to get the correct state.
-                int updated = repository.incrementClickCountIfActive(shortCode);
-
-                if (updated == 0) {
-
-                    cacheService.delete(shortCode);
-
-                    log.warn("Stale cache detected — shortCode={}, falling back to DB", shortCode);
-                    return resolveUrlFromDb(shortCode);    // ensure we return correct result
-                }
-
-                return uri;
-
-            } catch (IllegalArgumentException ex) {
-
-                log.error("Corrupted URL in cache, evicting — shortCode={}", shortCode);
-                cacheService.delete(shortCode);          // evict bad cache entry
-                throw new InvalidStoredUrlException(shortCode);
-            }
+            return resolveFromCacheOrFallback(shortCode, cached.get());
         }
 
         //  If cache miss, DB lookup
         log.info("Cache MISS — shortCode={}, querying DB", shortCode);
-        return resolveUrlFromDb(shortCode);
+        return resolveFromDatabase(shortCode);
     }
 
 
     // -------- Helper Methods --------
 
     /**
-     * Fetches the original URL from the database and prepares it for redirect.
-     *
-     * Steps:
-     * 1. Retrieve URL from DB using shortCode (throw error if not found)
-     * 2. Validate that URL is active and not expired
-     * 3. Store it in cache for faster future access (with proper TTL)
-     * 4. Convert original URL string into URI
-     * 5. Increment click count in DB (only if still valid)
-     * 6. Return URI for redirection
-     *
-     * Note:
-     * - Used when cache miss occurs or cache is stale
-     * - Acts as the source of truth (DB is always trusted over cache)
+     * Write-through cache warm — registered AFTER repository.save() but only
+     * fires AFTER the surrounding @Transactional commits.
+     * This prevents caching a URL whose DB write later rolls back (ghost cache entry).
      */
-    private URI resolveUrlFromDb(String shortCode){
-        ShortUrl url = repository.findByShortCode(shortCode)
-                .orElseThrow(() -> {
-                    log.warn("Short URL not found for shortCode={}", shortCode);
-                    return new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode);
-                });
+    private void registerCacheAfterCommit(String shortCode, String url){
 
-        // Validate before serving or caching
-        validateUrl(url);
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        cacheService.save(shortCode, url);
+                    }
+                }
+        );
+    }
 
-        // Build URI FIRST (avoid caching invalid URL)
-        URI uri;
+    /**
+     * Resolves a URL from cache and tracks the click.
+     * Falls back to DB if the cached entry is stale (URL deactivated/expired since caching).
+     * Evicts and throws if the cached URL itself is malformed.
+     */
+    private URI resolveFromCacheOrFallback(String shortCode, String cachedUrl){
         try {
-            uri = URI.create(url.getOriginalUrl());
-        } catch (IllegalArgumentException ex) {
-            log.error("Invalid URL stored in DB — shortCode={}, url={}", shortCode, url.getOriginalUrl());
-            throw new InvalidStoredUrlException(shortCode);
-        }
+            URI uri = URI.create(cachedUrl);
 
-        // 3. FINAL DB check (atomic)
-        int updated = repository.incrementClickCountIfActive(shortCode);
-
-        if (updated == 0) {
-            // Race condition detected (became invalid after validateUrl)
-
-            log.warn("URL became inactive/expired during request — shortCode={}, falling back to latest DB state", shortCode);
-
-            // Re-fetch latest state and throw correct error
-            ShortUrl latest = repository.findByShortCode(shortCode)
-                    .orElseThrow(() -> new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode));
-
-            validateUrl(latest); // throws if invalid
-
-            // Rebuild URI from latest
-            try {
-                uri = URI.create(latest.getOriginalUrl());
-            } catch (IllegalArgumentException ex) {
-                throw new InvalidStoredUrlException(shortCode);
+            // URL might be deactivated or expired in DB while still in cache.
+            // If click increment fails (returns 0), evict stale entry and fall back to DB.
+            if (!incrementClickIfActive(shortCode)) {
+                cacheService.delete(shortCode);
+                log.warn("Stale cache detected — shortCode={}, falling back to DB", shortCode);
+                return resolveFromDatabase(shortCode);
             }
 
-            url = latest; // ensure caching uses latest
+            return uri;
+        } catch (IllegalArgumentException ex) {
+            log.error("Corrupted URL in cache, evicting — shortCode={}", shortCode);
+            cacheService.delete(shortCode);
+            throw new InvalidStoredUrlException(shortCode);
+        }
+    }
+
+    /**
+     * Fetches the original URL from DB and prepares it for redirect.
+     * Handles the race condition where a URL is deactivated between validation and click tracking.
+     * Acts as the source of truth — DB is always trusted over cache.
+     */
+    private URI resolveFromDatabase(String shortCode){
+
+        // Fetches by shortCode and validates active/expiry state in one step
+        ShortUrl url = findAndValidate(shortCode);
+
+        // Build URI FIRST (avoid caching invalid URL)
+        URI uri = parseUri(url.getOriginalUrl(), shortCode);
+
+        // Atomic click increment — guards against a race where URL is deactivated
+        // between our validateUrl() check above and the actual update
+        if (!incrementClickIfActive(shortCode)) {
+            log.warn("URL became inactive/expired during request — shortCode={}, re-fetching latest DB state", shortCode);
+            url = findAndValidate(shortCode); // re-fetch and re-validate
+            uri = parseUri(url.getOriginalUrl(), shortCode);
         }
 
-        // Caches the URL ONLY after everything is valid with a TTL aligned to its expiry
         cacheWithAlignedTtl(shortCode, url);
-
         log.info("Redirecting — shortCode={}", shortCode);
         return uri;
     }
@@ -214,6 +183,21 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         }
     }
 
+    // TEMP click tracking (atomic DB update)
+    // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
+    private boolean incrementClickIfActive(String shortCode) {
+        return repository.incrementClickCountIfActive(shortCode) > 0;
+    }
+
+    // Wraps URI.create() with a meaningful exception on malformed stored URLs
+    private URI parseUri(String rawUrl, String shortCode) {
+        try {
+            return URI.create(rawUrl);
+        } catch (IllegalArgumentException ex) {
+            log.error("Invalid URL stored in DB — shortCode={}, url={}", shortCode, rawUrl);
+            throw new InvalidStoredUrlException(shortCode);
+        }
+    }
 
     // Validates that a short URL is active and not expired.
     private void validateUrl(ShortUrl url) {
@@ -231,6 +215,17 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         }
     }
 
+    // Fetches a ShortUrl by shortCode and immediately validates it.
+    private ShortUrl findAndValidate(String shortCode) {
+        ShortUrl url = repository.findByShortCode(shortCode)
+                .orElseThrow(() -> {
+                    log.warn("Short URL not found — shortCode={}", shortCode);
+                    return new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode);
+                });
+        validateUrl(url);
+        return url;
+    }
+
     // Parses and validates the input URL; allows only HTTP/HTTPS and rejects malformed URLs
     private URI validateAndNormalizeUrl(String originalUrl) {
 
@@ -239,6 +234,9 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             throw new BadRequestException("URL must not be empty");
         }
 
+        if (originalUrl.length() > MAX_URL_LENGTH) {
+            throw new BadRequestException("URL exceeds maximum allowed length");
+        }
 
         try {
             URI uri = URI.create(originalUrl);
@@ -262,5 +260,4 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             throw new BadRequestException("Invalid URL format");
         }
     }
-
 }
