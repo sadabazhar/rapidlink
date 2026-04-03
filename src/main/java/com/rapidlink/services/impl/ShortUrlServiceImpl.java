@@ -82,6 +82,13 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         Optional<String> cached = cacheService.get(shortCode);
         if (cached.isPresent()) {
 
+            // Negative cache HIT — this code was confirmed non-existent.
+            // Skip DB entirely and return 404 immediately.
+            if (cacheService.isNotFoundSentinel(cached.get())) {
+                log.info("Negative cache HIT — shortCode={}, returning 404 without DB query", shortCode);
+                throw new ShortUrlNotFoundException("Short URL not found, with this shortcode: " + shortCode);
+            }
+
             log.info("Cache HIT — shortCode={}", shortCode);
             return resolveFromCacheOrFallback(shortCode, cached.get());
         }
@@ -105,7 +112,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        cacheService.save(shortCode, url);
+                        cacheService.save(shortCode, url); // warm with real URL
                     }
                 }
         );
@@ -145,8 +152,20 @@ public class ShortUrlServiceImpl implements ShortUrlService {
      */
     private URI resolveFromDatabase(String shortCode){
 
-        // Fetches by shortCode and validates active/expiry state in one step
-        ShortUrl url = findAndValidate(shortCode);
+        // findAndValidate throws ShortUrlNotFoundException if the code doesn't exist.
+        // We intercept that specific case to write the negative sentinel BEFORE rethrowing.
+        ShortUrl url;
+
+        try {
+            url = findAndValidate(shortCode);
+        } catch (ShortUrlNotFoundException ex) {
+
+            // DB confirmed: this short code does not exist.
+            // Cache the negative result so future requests skip the DB entirely.
+            cacheService.saveNotFound(shortCode);
+            log.info("Negative cache written — shortCode={}", shortCode);
+            throw ex; // rethrow — caller (resolveUrl) handles the 404 response
+        }
 
         // Build URI FIRST (avoid caching invalid URL)
         URI uri = parseUri(url.getOriginalUrl(), shortCode);

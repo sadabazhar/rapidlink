@@ -18,7 +18,9 @@ public class UrlCacheServiceImpl implements UrlCacheService {
     private final StringRedisTemplate redisTemplate;
 
     private static final String PREFIX = "url:";
+    private static final String NOT_FOUND_SENTINEL = "__NOT_FOUND__";
     private static final Duration DEFAULT_TTL = Duration.ofHours(24);
+    private static final Duration NEGATIVE_CACHE_TTL = Duration.ofSeconds(60);
 
     // Fetch original URL from Redis cache
     @Override
@@ -113,6 +115,39 @@ public class UrlCacheServiceImpl implements UrlCacheService {
             log.error("Unexpected Redis error during delete — key={}", key, ex);
         }
     }
+
+    /**
+     * Caches the fact that this shortCode does not exist in the DB.
+     * Uses a short TTL to limit staleness risk if the code is later created.
+     */
+    @Override
+    public void saveNotFound(String shortCode) {
+        if (shortCode == null || shortCode.isBlank()) {
+            log.warn("Skipping negative cache write — shortCode is blank");
+            return;
+        }
+        String key = buildKey(shortCode);
+        try {
+            redisTemplate.opsForValue().set(key, NOT_FOUND_SENTINEL, NEGATIVE_CACHE_TTL);
+            log.debug("Negative cache entry written — shortCode={}, TTL={}m",
+                    shortCode, NEGATIVE_CACHE_TTL.toMinutes());
+        } catch (RedisConnectionFailureException ex) {
+            log.warn("Redis unavailable — skipping negative cache write — key={}", key);
+        } catch (RuntimeException ex) {
+            log.error("Unexpected Redis error during saveNotFound — key={}", key, ex);
+        }
+    }
+
+    /**
+     * Returns true if the cached value is a negative sentinel (i.e., "not found" was cached).
+     * Callers should check this BEFORE treating the Optional value as a real URL.
+     */
+    @Override
+    public boolean isNotFoundSentinel(String cachedValue) {
+        return NOT_FOUND_SENTINEL.equals(cachedValue);
+    }
+
+    // ---------- Helper Methods --------
 
     // Build Redis key with namespace
     private String buildKey(String shortCode) {
