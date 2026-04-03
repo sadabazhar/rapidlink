@@ -12,4 +12,8 @@ public interface UrlCacheService {
     void save(String shortCode, String originalUrl, Duration ttl);
 
     void delete(String shortCode);
+
+    boolean isNotFoundSentinel(String cachedValue);
+
+    void saveNotFound(String shortCode);
 }
