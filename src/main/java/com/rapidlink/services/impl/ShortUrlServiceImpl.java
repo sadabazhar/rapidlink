@@ -129,10 +129,12 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             }
 
             return uri;
+
+            // evict and fall back to DB, user gets their redirect
         } catch (IllegalArgumentException ex) {
-            log.error("Corrupted URL in cache, evicting — shortCode={}", shortCode);
+            log.error("Corrupted URL in cache, evicting and retrying from DB — shortCode={}", shortCode);
             cacheService.delete(shortCode);
-            throw new InvalidStoredUrlException(shortCode);
+            return resolveFromDatabase(shortCode);  // DB is source of truth
         }
     }
 
@@ -153,7 +155,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         // between our validateUrl() check above and the actual update
         if (!incrementClickIfActive(shortCode)) {
             log.warn("URL became inactive/expired during request — shortCode={}, re-fetching latest DB state", shortCode);
-            url = findAndValidate(shortCode); // re-fetch and re-validate
+            url = findAndValidate(shortCode);// re-fetch and re-validate
             uri = parseUri(url.getOriginalUrl(), shortCode);
         }
 
@@ -194,7 +196,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         try {
             return URI.create(rawUrl);
         } catch (IllegalArgumentException ex) {
-            log.error("Invalid URL stored in DB — shortCode={}, url={}", shortCode, rawUrl);
+            log.error("Invalid URL stored in DB — shortCode={}", shortCode);
             throw new InvalidStoredUrlException(shortCode);
         }
     }
