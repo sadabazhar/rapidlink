@@ -1,0 +1,18 @@
+
+global:
+  # Prometheus will collect metrics every 5 seconds
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'rapidlink-app'
+
+    metrics_path: '/actuator/prometheus'
+    # Endpoint from which Prometheus pulls metrics (exposed by Spring Boot Actuator)
+
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        # Target application to scrape metrics from
+        # host.docker.internal = access localhost app from inside Docker
+
+    scrape_timeout: 4s
+    # Max time Prometheus waits for a response before timing out
