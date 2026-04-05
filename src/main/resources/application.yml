@@ -54,3 +54,45 @@ server:
 logging:
   level:
     org.hibernate.SQL: DEBUG
+
+
+# ── Actuator & Metrics ──────────────────────────────────────────────
+management:
+  # Expose monitoring endpoints over HTTP
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+
+  # Enables /actuator/prometheus endpoint
+  endpoint:
+    prometheus:
+      enabled: true
+
+    # Shows detailed health info (DB, Redis, etc.)
+    health:
+      show-details: always
+
+  # Adds "application=rapidlink" label to all metrics (useful in Grafana filtering)
+  metrics:
+    tags:
+      application: rapidlink
+    enable:
+      lettuce: true
+
+    # Enables latency histogram (required for accurate p95/p99 in Prometheus)
+    distribution:
+      percentiles-histogram:
+        http:
+          server:
+            requests: true
+
+      percentiles:
+        http:
+          server:
+            requests: 0.5, 0.95, 0.99
+            # Calculates latency percentiles:
+            # p50 → median
+            # p95 → slow users
+            # p99 → worst-case latency
+

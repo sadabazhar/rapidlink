@@ -14,6 +14,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - rapidlink-network
+
   redis:
     image: redis:7
     container_name: rapidlink-redis
@@ -23,8 +24,37 @@ services:
     networks:
       - rapidlink-network
 
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: rapidlink-prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - rapidlink-network
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: rapidlink-grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - rapidlink-network
+
+
 volumes:
   postgres_data:
+  grafana_data:
 
 networks:
   rapidlink-network:
