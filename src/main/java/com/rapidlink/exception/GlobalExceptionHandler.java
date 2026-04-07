@@ -1,8 +1,13 @@
 package com.rapidlink.exception;
 
 import com.rapidlink.dto.response.ErrorResponse;
+import com.rapidlink.metrics.RapidLinkMetrics;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -18,8 +23,11 @@ import java.util.stream.Collectors;
  * Converts exceptions into a consistent API error response.
  */
 @RestControllerAdvice
+@RequiredArgsConstructor
 @Slf4j
 public class GlobalExceptionHandler {
+
+    private final RapidLinkMetrics metrics;
 
     /**
      * Handles all custom exceptions (business logic errors).
@@ -79,6 +87,50 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles Spring Data / JDBC exceptions from PostgreSQL.
+     */
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<ErrorResponse> handleDataAccessException(
+            DataAccessException ex,
+            HttpServletRequest req
+    ) {
+        metrics.recordError("db_error");
+        log.error("Database error at path={}", req.getRequestURI(), ex);
+
+        ErrorResponse response = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(),
+                "Something went wrong",
+                req.getRequestURI()
+        );
+
+        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    /**
+     * Handles Redis connection failures specifically.
+     */
+    @ExceptionHandler({RedisConnectionFailureException.class, RedisSystemException.class})
+    public ResponseEntity<ErrorResponse> handleRedisException(
+            RuntimeException ex,
+            HttpServletRequest req
+    ) {
+        metrics.recordError("redis_unavailable");
+        log.error("Redis error at path={}", req.getRequestURI(), ex);
+
+        ErrorResponse response = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(),
+                "Something went wrong",
+                req.getRequestURI()
+        );
+
+        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    /**
      * Handles unexpected errors (fallback).
      * We don’t expose internal details to the user.
      */
@@ -87,6 +139,9 @@ public class GlobalExceptionHandler {
             Exception ex,
             HttpServletRequest req
     ) {
+
+        metrics.recordError("unexpected");
+
         // Log full error for debugging
         log.error("Unexpected error occurred at path={}", req.getRequestURI(), ex);
 
