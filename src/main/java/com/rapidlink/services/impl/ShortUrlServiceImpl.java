@@ -113,6 +113,10 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 // Negative cache HIT — this code was confirmed non-existent.
                 // Skip DB entirely and return 404 immediately.
                 if (cacheService.isNotFoundSentinel(cached.get())) {
+
+                    // Even shortcode exists in negative cache, still count as not found.
+                    metrics.recordRedirectNotFound();
+
                     log.info("Negative cache HIT — shortCode={}, returning 404 without DB query", shortCode);
                     throw new ShortUrlNotFoundException("Short URL not found, with this shortcode: " + shortCode);
                 }
