@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,4 +42,6 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, UUID> {
     @Query("SELECT u FROM ShortUrl u WHERE u.shortCode = :shortCode " +
             "AND u.isActive = true AND (u.expiresAt IS NULL OR u.expiresAt > CURRENT_TIMESTAMP)")
     Optional<ShortUrl> findActiveByShortCode(@Param("shortCode") String shortCode);
+
+    long countByExpiresAtAfterOrExpiresAtIsNull(LocalDateTime now);
 }

@@ -1,5 +1,6 @@
 package com.rapidlink.services.impl;
 
+import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.UrlCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import java.util.Optional;
 public class UrlCacheServiceImpl implements UrlCacheService {
 
     private final StringRedisTemplate redisTemplate;
+    private final RapidLinkMetrics metrics;
 
     private static final String PREFIX = "url:";
     private static final String NOT_FOUND_SENTINEL = "__NOT_FOUND__";
@@ -37,9 +39,23 @@ public class UrlCacheServiceImpl implements UrlCacheService {
             String value = redisTemplate.opsForValue().get(key);
 
             if (value == null) {
+                //RecordCache miss. bcz Redis has no entry for this key.
+                metrics.recordCacheMiss();
+
                 log.debug("Cache MISS for key: {}", key);
                 return Optional.empty();
             }
+
+            if (isNotFoundSentinel(value)) {
+                //Record negative cache hit. bcz Redis is holding a sentinel value.
+                metrics.recordNegativeCacheHit();
+
+                log.debug("Negative sentinel HIT for key: {}", key);
+                return Optional.of(value);
+            }
+
+            // RecordCache cache hit. bcz Redis has the original URL.
+            metrics.recordCacheHit();
 
             log.debug("Cache HIT cache service for key: {}", key);
             return Optional.of(value);
