@@ -1,0 +1,38 @@
+{
+  "valid": [
+    "gO",
+    "gp",
+    "gY",
+    "gq",
+    "gJ",
+    "h0",
+    "gL",
+    "h1",
+    "gK",
+    "gv",
+    "gj",
+    "gk",
+    "gl",
+    "gm",
+    "gn",
+    "gw",
+    "gy",
+    "gE",
+    "gr",
+    "gz",
+    "gA",
+    "gx"
+  ],
+  "invalid": [
+    "zz1",
+    "abc999",
+    "invalid1",
+    "notfound",
+    "xyz123",
+    "deadcode",
+    "404xx",
+    "fake01",
+    "randomX",
+    "nope123"
+  ]
+}
