@@ -50,13 +50,20 @@ public class RapidLinkMetrics {
     private Counter redirectExpiredCounter;
 
     private Counter clickIncrementCounter;
+    private Counter clickIncrementFailureCounter;
+    private Counter clickFetchCounter;
+    private Counter clickFetchFailureCounter;
+
     private Counter clickFlushToDbCounter;
+    private Counter clickFlushFailureCounter;
 
     // ── Timers (latency tracking) ────────────────────────────────────────────
     // Automatically tracks count, total time, and percentiles
 
     private Timer redirectLatencyTimer;
     private Timer urlCreateLatencyTimer;
+    private Timer clickFetchLatencyTimer;
+    private Timer clickFlushLatencyTimer;
 
     // ── Gauge (current state) ────────────────────────────────────────────────
     // Holds latest value; read during Prometheus scrape
@@ -126,16 +133,33 @@ public class RapidLinkMetrics {
                 .register(registry);
 
         // Click tracking
+
         clickIncrementCounter = Counter.builder("rapidlink.click.increment")
                 .description("A click was recorded — either directly to DB (before) or to Redis (after optimization)")
+                .register(registry);
+
+        clickIncrementFailureCounter = Counter.builder("rapidlink.click.increment.failure")
+                .description("Click increment failed due to Redis error")
+                .register(registry);
+
+        clickFetchCounter = Counter.builder("rapidlink.click.fetch.count")
+                .description("Number of click keys fetched from Redis for sync")
+                .register(registry);
+
+        clickFetchFailureCounter = Counter.builder("rapidlink.click.fetch.failure")
+                .description("Failure while fetching click counts from Redis")
                 .register(registry);
 
         clickFlushToDbCounter = Counter.builder("rapidlink.click.flush.db")
                 .description("Clicks flushed from Redis to PostgreSQL in a batch write")
                 .register(registry);
 
+        clickFlushFailureCounter = Counter.builder("rapidlink.click.flush.failure")
+                .description("Failure while flushing click counts to DB")
+                .register(registry);
 
-        // ── Create and Redirect latency timer ────────────────────────────────────────────
+
+        // ── latency timer ────────────────────────────────────────────
 
         /*
          * Pre-computes common percentiles (p50, p95, p99)
@@ -150,6 +174,16 @@ public class RapidLinkMetrics {
         redirectLatencyTimer = Timer.builder("rapidlink.redirect.latency")
                 .description("Full duration of short URL resolution: cache check → optional DB query → expiry check")
                 .publishPercentiles(0.50, 0.95, 0.99)
+                .register(registry);
+
+        clickFetchLatencyTimer = Timer.builder("rapidlink.click.fetch.latency")
+                .description("Time taken to fetch click counts from Redis")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(registry);
+
+        clickFlushLatencyTimer = Timer.builder("rapidlink.click.flush.latency")
+                .description("Time taken to flush click counts to DB")
+                .publishPercentiles(0.5, 0.95, 0.99)
                 .register(registry);
 
         // ── Active URL gauge ──────────────────────────────────────────────────
@@ -189,7 +223,13 @@ public class RapidLinkMetrics {
 
     // Click tracking
     public void recordClickIncrement()          { clickIncrementCounter.increment(); }
+    public void recordClickIncrementFailure() { clickIncrementFailureCounter.increment(); }
+    public void recordClickFetch(long count) { clickFetchCounter.increment(count); }
+    public void recordClickFetchFailure() { clickFetchFailureCounter.increment(); }
+
     public void recordClickFlushToDb(long count) { clickFlushToDbCounter.increment(count); }
+    public void recordClickFlushFailure() { clickFlushFailureCounter.increment(); }
+
 
     // Error
     /*
@@ -216,6 +256,15 @@ public class RapidLinkMetrics {
 
     public <T> T timeRedirect(Supplier<T> operation) {
         return redirectLatencyTimer.record(operation);
+    }
+
+    // Timers
+    public <T> T timeClickFetch(Supplier<T> operation) {
+        return clickFetchLatencyTimer.record(operation);
+    }
+
+    public <T> T timeClickFlush(Supplier<T> operation) {
+        return clickFlushLatencyTimer.record(operation);
     }
 
     // Gauge
