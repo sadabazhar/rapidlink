@@ -5,6 +5,7 @@ import com.rapidlink.repository.ClickTrackingRepository;
 import com.rapidlink.services.ClickTrackingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import java.util.Map;
@@ -36,6 +37,9 @@ public class ClickTrackSyncScheduler {
     private final ClickTrackingService clickTrackingService;
     private final ClickTrackingRepository clickTrackingRepository;
     private final RapidLinkMetrics metrics;
+    private final StringRedisTemplate redisTemplate;
+
+    private static final String PROCESSING_PREFIX = "processing:";
 
     /**
      * Scheduled method that runs periodically to sync click counts.
@@ -78,7 +82,16 @@ public class ClickTrackSyncScheduler {
 
             // Total clicks flushed
             long totalClicks = counts.values().stream().mapToLong(Long::longValue).sum();
+            log.info("[SYNC] totalClicks={}, keys={}", totalClicks, counts.size());
             metrics.recordClickFlushToDb(totalClicks);
+
+            // delete processing keys AFTER success DB flush
+            // TODO: If DB fails, processing key remains and can be retried later
+            counts.keySet().forEach(shortCode -> {
+                String processingKey = PROCESSING_PREFIX + shortCode;
+                redisTemplate.delete(processingKey);
+            });
+
         } catch (Exception ex) {
 
             // Step 4: Handle failure

@@ -4,6 +4,8 @@ import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.ClickTrackingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
@@ -30,7 +32,8 @@ public class ClickTrackingServiceImpl implements ClickTrackingService {
     private final StringRedisTemplate redisTemplate;
     private final RapidLinkMetrics metrics;
 
-    private static final String PREFIX = "click_count:";
+    private static final String CLICK_PREFIX = "click_count:";
+    private static final String PROCESSING_PREFIX = "processing:";
     private static final String ACTIVE_KEYS_SET = "active_click_keys";
 
     /**
@@ -43,12 +46,21 @@ public class ClickTrackingServiceImpl implements ClickTrackingService {
 
         try {
 
-            // If key doesn't exist → created with value 1
-            // If exists → incremented atomically
-            redisTemplate.opsForValue().increment(PREFIX + shortCode);
+            // Making CLick count INCR and active key SADD Atomic
+            redisTemplate.execute(new SessionCallback<>() {
+                @Override
+                public Object execute(RedisOperations operations) {
+                    operations.multi();
 
-            // Track active key (only once, Set avoids duplicates)
-            redisTemplate.opsForSet().add(ACTIVE_KEYS_SET, shortCode);
+                    // If key doesn't exist → created with value 1
+                    // If exists → incremented atomically
+                    operations.opsForValue().increment(CLICK_PREFIX + shortCode);
+
+                    // Track active key (only once, Set avoids duplicates)
+                    operations.opsForSet().add(ACTIVE_KEYS_SET, shortCode);
+                    return operations.exec();
+                }
+            });
 
             // Increment click count
             metrics.recordClickIncrement();
@@ -91,23 +103,39 @@ public class ClickTrackingServiceImpl implements ClickTrackingService {
                 // 2. Process each active key
                 for (String shortCode : activeKeys) {
 
-                    String key = PREFIX + shortCode;
+                    String clickKey = CLICK_PREFIX + shortCode;
+                    String processingKey = PROCESSING_PREFIX + shortCode;
 
                     try {
-                        // 3. Get and delete click count
-                        String value = redisTemplate.opsForValue().getAndDelete(key);
+
+                        /*
+                            Safe RENAME (atomic handoff)
+                            Moves current clicks → processing namespace
+                            New clicks will go to fresh click_count key
+                         */
+
+                        if (Boolean.TRUE.equals(redisTemplate.hasKey(clickKey))) {
+                            redisTemplate.rename(clickKey, processingKey);
+                        } else {
+                            // No key → nothing to process
+                            continue;
+                        }
+
+                        // 3. Get click count from processing key
+                        String value = redisTemplate.opsForValue().get(processingKey);
 
                         if (value == null || value.equals("0")) {
-                            // Cleanup stale key
-                            redisTemplate.opsForSet().remove(ACTIVE_KEYS_SET, shortCode);
+                            redisTemplate.delete(processingKey);
                             continue;
                         }
 
                         // 4. Store result
                         counts.put(shortCode, Long.parseLong(value));
 
-                        // 5. Remove from active set
-                        redisTemplate.opsForSet().remove(ACTIVE_KEYS_SET, shortCode);
+                        // 5. Remove from active set, Only remove if no new key exists
+                        if (!Boolean.TRUE.equals(redisTemplate.hasKey(clickKey))) {
+                            redisTemplate.opsForSet().remove(ACTIVE_KEYS_SET, shortCode);
+                        }
 
                     } catch (Exception ex) {
                         log.error("Failed processing shortCode={}", shortCode, ex);

@@ -51,8 +51,6 @@ public class ClickTrackingRepository {
             UPDATE short_urls
             SET click_count = click_count + ?
             WHERE short_code = ?
-            AND is_active = true
-            AND (expires_at IS NULL OR expires_at > NOW())
         """;
 
         // Convert Map → List<Object[]>, bcz of Order matters: ? → count ? → short_code
