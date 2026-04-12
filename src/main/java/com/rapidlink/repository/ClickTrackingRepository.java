@@ -1,6 +1,7 @@
 package com.rapidlink.repository;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,7 @@ import java.util.Map;
  */
 @Repository
 @RequiredArgsConstructor
+@Slf4j
 public class ClickTrackingRepository {
 
     // Spring JDBC helper for executing SQL queries efficiently
@@ -46,7 +48,7 @@ public class ClickTrackingRepository {
     public void batchIncrement(Map<String, Long> counts) {
 
         // SQL query to increment click count atomically in DB
-        // - Only updates active and non-expired URLs
+        // Updates click count for any matching short_code
         String sql = """
             UPDATE short_urls
             SET click_count = click_count + ?
@@ -72,7 +74,20 @@ public class ClickTrackingRepository {
         // → 500 + 500 + 200 batches
         for (int i = 0; i < args.size(); i += batchSize) {
             List<Object[]> batch = args.subList(i, Math.min(i + batchSize, args.size()));
-            jdbcTemplate.batchUpdate(sql, batch);
+
+            // Each element represents rows affected (1 = success, 0 = no row found)
+            int[] updated = jdbcTemplate.batchUpdate(sql, batch);
+
+            // Loop through only not updated clicks
+            for (int j = 0; j < updated.length; j++) {
+                if (updated[j] == 0) {
+                    String shortCode = (String) batch.get(j)[1];
+
+                    log.warn("ShortCode not found during click flush: {}", shortCode);
+
+                    // Todo: Move not updated click counts to retry queue
+                }
+            }
         }
     }
 }
