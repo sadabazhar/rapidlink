@@ -5,6 +5,7 @@ import com.rapidlink.entity.ShortUrl;
 import com.rapidlink.exception.*;
 import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.repository.ShortUrlRepository;
+import com.rapidlink.services.ClickTrackingService;
 import com.rapidlink.services.ShortUrlService;
 import com.rapidlink.services.UrlCacheService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
     private final ShortUrlRepository repository;
     private final UrlCacheService cacheService;
     private final RapidLinkMetrics metrics;
+    private final ClickTrackingService clickService;
 
     private static final long MIN_CACHE_TTL_SECONDS = 5;
     private static final int MAX_URL_LENGTH = 2048;
@@ -97,7 +99,6 @@ public class ShortUrlServiceImpl implements ShortUrlService {
 
     // Resolves short code with original URL and tracks click
     @Override
-    @Transactional // TODO: Temporary for MVP. Replace with Redis-based counter + async persistence to avoid transaction overhead and row-level contention under high traffic.
     public URI resolveUrl(String shortCode) {
 
 
@@ -130,13 +131,8 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 result = resolveFromDatabase(shortCode);
             }
 
-            /*
-             * Record success and click ONLY after all validation and
-             * click increment succeed. If any step above threw, these
-             * lines are never reached — preventing false success counts.
-             */
+            // Increment Redirect success at the end
             metrics.recordRedirectSuccess();
-            metrics.recordClickIncrement();
             return result;
         });
     }
@@ -170,13 +166,8 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         try {
             URI uri = URI.create(cachedUrl);
 
-            // URL might be deactivated or expired in DB while still in cache.
-            // If click increment fails (returns 0), evict stale entry and fall back to DB.
-            if (!incrementClickIfActive(shortCode)) {
-                cacheService.delete(shortCode);
-                log.warn("Stale cache detected — shortCode={}, falling back to DB", shortCode);
-                return resolveFromDatabase(shortCode);
-            }
+            // Atomic click increment in Redis
+            clickService.increment(shortCode);
 
             return uri;
 
@@ -226,13 +217,8 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         // Build URI FIRST (avoid caching invalid URL)
         URI uri = parseUri(url.getOriginalUrl(), shortCode);
 
-        // Atomic click increment — guards against a race where URL is deactivated
-        // between our validateUrl() check above and the actual update
-        if (!incrementClickIfActive(shortCode)) {
-            log.warn("URL became inactive/expired during request — shortCode={}, re-fetching latest DB state", shortCode);
-            url = findAndValidate(shortCode);// re-fetch and re-validate
-            uri = parseUri(url.getOriginalUrl(), shortCode);
-        }
+        // Atomic click increment in Redis
+        clickService.increment(shortCode);
 
         cacheWithAlignedTtl(shortCode, url);
         log.info("Redirecting — shortCode={}", shortCode);
@@ -258,12 +244,6 @@ public class ShortUrlServiceImpl implements ShortUrlService {
             log.debug("Skipping cache — TTL too short — shortCode={}, remainingTtl={}s",
                     shortCode, remainingTtl.getSeconds());
         }
-    }
-
-    // TEMP click tracking (atomic DB update)
-    // Update: use Redis INCR for atomic counter, flush to DB async via scheduler.
-    private boolean incrementClickIfActive(String shortCode) {
-        return repository.incrementClickCountIfActive(shortCode) > 0;
     }
 
     // Wraps URI.create() with a meaningful exception on malformed stored URLs
