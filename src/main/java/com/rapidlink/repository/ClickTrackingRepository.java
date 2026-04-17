@@ -14,18 +14,24 @@ import java.util.Map;
  * Repository responsible for batching click count updates to the database.
  *
  * WHY THIS EXISTS:
- * - Avoids updating DB on every user click (which is slow and not scalable)
- * - Instead, Redis stores click counts temporarily
- * - This class flushes aggregated counts into DB in batches
+ * - Writing to DB on every click is slow and not scalable
+ * - Click counts are first stored in Redis (fast, in-memory)
+ * - This class periodically flushes aggregated counts into DB
  *
  * HOW IT WORKS:
  * - Accepts a map of shortCode → clickCount
- * - Uses JDBC batch update to efficiently update multiple rows
- * - Splits into smaller chunks (batchSize) to avoid DB overload
+ * - Uses JDBC batch update to update multiple rows efficiently
+ * - Splits updates into smaller chunks to avoid DB overload
+ *
+ * FAILURE HANDLING:
+ * - If any shortCode is not found in DB → fail fast
+ * - Throws exception to signal scheduler to retry the whole batch
+ * - Keeps logic simple (all success OR all retry)
  *
  * IMPORTANT:
- * - This runs inside a scheduler (async background job)
- * - Ensures DB writes are minimized and efficient
+ * - Called by scheduler (background job, not user request)
+ * - Uses atomic DB update (click_count = click_count + ?)
+ * - Safe for retries (no duplicate issues due to incremental update)
  */
 @Repository
 @RequiredArgsConstructor
@@ -47,17 +53,19 @@ public class ClickTrackingRepository {
     @Transactional
     public void batchIncrement(Map<String, Long> counts) {
 
-        // SQL query to increment click count atomically in DB
-        // Updates click count for any matching short_code
+        // SQL query to increment click count atomically
+        // Example:
+        // click_count = click_count + 120
         String sql = """
             UPDATE short_urls
             SET click_count = click_count + ?
             WHERE short_code = ?
         """;
 
-        // Convert Map → List<Object[]>, bcz of Order matters: ? → count ? → short_code
+        // Convert Map → List<Object[]>
+        // Bcz, order matters: first "count", then "short_code"
         // Example:
-        // ["abc123", 120] → becomes [120, "abc123"]
+        // ("abc123", 120) → [120, "abc123"]
         List<Object[]> batchArgs = counts.entrySet().stream()
                 .map(e -> new Object[]{e.getValue(), e.getKey()})
                 .toList();
@@ -65,7 +73,7 @@ public class ClickTrackingRepository {
         // Update only 500 shorturl click at a batch, Prevents sending too many updates in a single DB call
         int batchSize = 500;
 
-        // Convert to modifiable list
+        // Convert to modifiable list (subList needs this)
         List<Object[]> args = new ArrayList<>(batchArgs);
 
         // Process updates in chunks
@@ -73,19 +81,30 @@ public class ClickTrackingRepository {
         // If 1200 records:
         // → 500 + 500 + 200 batches
         for (int i = 0; i < args.size(); i += batchSize) {
+
+            // Create sub-batch
             List<Object[]> batch = args.subList(i, Math.min(i + batchSize, args.size()));
 
-            // Each element represents rows affected (1 = success, 0 = no row found)
+            // Execute batch update
+            // Each value in result:
+            // 1 → row updated
+            // 0 → no row found for that shortCode
             int[] updated = jdbcTemplate.batchUpdate(sql, batch);
 
-            // Loop through only not updated clicks
+            // Check for failures (rows not updated)
             for (int j = 0; j < updated.length; j++) {
+
+                // If DB did not update row → shortCode missing
                 if (updated[j] == 0) {
+
+                    // Get failed shortCode from batch
                     String shortCode = (String) batch.get(j)[1];
 
                     log.warn("ShortCode not found during click flush: {}", shortCode);
 
-                    // Todo: Move not updated click counts to retry queue
+                    // FAIL FAST → trigger retry for whole batch
+                    throw new IllegalStateException("ShortCode not found: " + shortCode);
+
                 }
             }
         }
