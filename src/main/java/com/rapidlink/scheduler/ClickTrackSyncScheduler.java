@@ -55,7 +55,8 @@ public class ClickTrackSyncScheduler {
     private final ClickTrackingRepository clickTrackingRepository;
     private final RapidLinkMetrics metrics;
     private final StringRedisTemplate redisTemplate;
-    private final DefaultRedisScript<Long> moveToRetryScript;
+    private final DefaultRedisScript<Long> moveToRetryAtomicScript;
+    private final DefaultRedisScript<Long> moveToDlqScript;
 
     private static final String PROCESSING_PREFIX = "processing:";
     private static final String RETRY_PREFIX = "retry:";
@@ -126,8 +127,11 @@ public class ClickTrackSyncScheduler {
                 String retryKey = RETRY_PREFIX + shortCode;
                 String dlqKey = DLQ_PREFIX + shortCode;
 
-                // Move retry → DLQ (reuse Lua if you want)
-                redisTemplate.rename(retryKey, dlqKey);
+                // Move retry → DLQ (If key is already exists merge it)
+                redisTemplate.execute(
+                        moveToDlqScript,
+                        List.of(retryKey, dlqKey)
+                );
 
                 // Cleanup tracking
                 redisTemplate.opsForSet().remove(RETRY_KEYS_SET, shortCode);
@@ -209,7 +213,14 @@ public class ClickTrackSyncScheduler {
 
             // Move ALL data to retry queue (important for data safety)
             for (String shortCode : counts.keySet()) {
-                moveToRetry(shortCode, prefix + shortCode);
+
+                if (PROCESSING_PREFIX.equals(prefix)) {
+                    // only move fresh data to retry
+                    moveToRetry(shortCode, prefix + shortCode);
+                } else {
+                    // already retry → just increase retry count
+                    redisTemplate.opsForValue().increment(RETRY_COUNT_PREFIX + shortCode);
+                }
             }
 
             metrics.recordClickFlushFailure();
@@ -233,20 +244,21 @@ public class ClickTrackSyncScheduler {
 
         try {
 
-            // Execute Lua script:
-            // Atomically performs GET → INCRBY → DELETE
+            // Execute Lua script (Atomically performs):
+            // (Read val from processing key, merge into retry key, delete processing key, incr retry, add to retry set)
             redisTemplate.execute(
-                    moveToRetryScript,
-                    List.of(sourceKey, retryKey)
+                    moveToRetryAtomicScript,
+                    List.of(
+                            sourceKey,
+                            retryKey,
+                            retryCountKey,
+                            RETRY_KEYS_SET
+                    ),
+                    shortCode
             );
 
-            // Increment retry count
-            Long retryCount = redisTemplate.opsForValue().increment(retryCountKey);
 
-            // Track retry key in Redis Set
-            redisTemplate.opsForSet().add(RETRY_KEYS_SET, shortCode);
-
-            log.warn("[RETRY] Moved to retry queue: {}, count={}", shortCode, retryCount);
+            log.warn("[RETRY] Moved to retry queue: {}", shortCode);
 
         } catch (Exception ex) {
             log.error("[RETRY] Failed to move key to retry: {}", shortCode, ex);

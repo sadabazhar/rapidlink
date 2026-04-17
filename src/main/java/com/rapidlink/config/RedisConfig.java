@@ -108,29 +108,69 @@ public class RedisConfig {
     }
 
     /**
-     * Lua script:
-     * - Move value from source → retry key
-     * - Merge if retry key already exists
-     * - Delete source key
+     * Lua Script: Move data to retry queue (atomic)
+     *
+     * Steps:
+     * Read value from source key (processing:<code>)
+     * Add (merge) value into retry key (retry:<code>)
+     * Delete source key
+     * Increment retry counter
+     * Add key to retry set
      *
      * Prevents data loss during retry handling.
      */
     @Bean
-    public DefaultRedisScript<Long> moveToRetryScript() {
+    public DefaultRedisScript<Long> moveToRetryAtomicScript() {
 
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
 
         script.setScriptText("""
-            local val = redis.call('GET', KEYS[1])
-            if val then
-                redis.call('INCRBY', KEYS[2], val)
-                redis.call('DEL', KEYS[1])
-            end
-            return 1
-        """);
+        local val = redis.call('GET', KEYS[1])
+        if val then
+            -- merge into retry key
+            redis.call('INCRBY', KEYS[2], val)
+
+            -- delete source key
+            redis.call('DEL', KEYS[1])
+
+            -- increment retry count
+            redis.call('INCR', KEYS[3])
+
+            -- add to retry set
+            redis.call('SADD', KEYS[4], ARGV[1])
+        end
+        return 1
+    """);
 
         script.setResultType(Long.class);
+        return script;
+    }
 
+    /**
+     * Lua Script: Move data to DLQ (atomic)
+     *
+     * Steps:
+     * Read value from retry key (retry:<code>)
+     * Merge into DLQ key (dlq:<code>)
+     * Delete retry key
+     *
+     * - Preserves existing DLQ data (merge instead of replace)
+     */
+    @Bean
+    public DefaultRedisScript<Long> moveToDlqScript() {
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+
+        script.setScriptText("""
+        local val = redis.call('GET', KEYS[1])
+        if val then
+            redis.call('INCRBY', KEYS[2], val)
+            redis.call('DEL', KEYS[1])
+        end
+        return 1
+    """);
+
+        script.setResultType(Long.class);
         return script;
     }
 }
