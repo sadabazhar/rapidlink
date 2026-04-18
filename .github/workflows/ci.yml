@@ -2,22 +2,22 @@ name: RapidLink CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]    # Run on push to main branch
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main" ]    # Run on PRs targeting main
 
 permissions:
-  contents: read
+  contents: read    # Allow workflow to read repository code
 
 jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 10   # Fail job if it runs too long
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16    # Start PostgreSQL container
         env:
           POSTGRES_DB: rapidlink
           POSTGRES_USER: rapidlink_user
@@ -31,7 +31,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7
+        image: redis:7    # Start Redis container
         ports:
           - 6379:6379
         options: >-
@@ -42,34 +42,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4   # Download repository code
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
-          cache: maven
+          cache: maven    # Cache dependencies for faster builds
 
       - name: Make mvnw executable
         run: chmod +x ./mvnw
 
-      # Wait for all dependent services (Postgres + Redis)
-      - name: Wait for services
-        run: |
-          echo "Waiting for PostgreSQL..."
-          for i in {1..10}; do
-            pg_isready -h localhost -p 5432 -U rapidlink_user -d rapidlink && break
-            echo "PostgreSQL not ready yet..."
-            sleep 3
-          done
-            
-          echo "Waiting for Redis..."
-          for i in {1..10}; do
-            redis-cli -h localhost -p 6379 ping && break
-            echo "Redis not ready yet..."
-            sleep 3
-          done
-
-      - name: Build (skip tests temporarily)
-        run: ./mvnw clean verify -DskipTests
+      - name: Build & Run Tests
+        run: ./mvnw clean verify -Dspring.profiles.active=test    # Build project and run tests with test profile

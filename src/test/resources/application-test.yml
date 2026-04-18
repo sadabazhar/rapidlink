@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rapidlink_test    # Connect to dedicated test database
+    username: rapidlink_user
+    password: rapidlink_password
+
+    hikari:
+      maximum-pool-size: 5   # Keep pool small for tests (saves resources, faster startup)
+
+  jpa:
+    hibernate:
+      ddl-auto: none    # Disable auto schema changes
+
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Kolkata   # Ensure consistent timestamps in DB
+
+    show-sql: false
+
+  flyway:
+    enabled: true   # Run DB migrations on startup
+    baseline-on-migrate: true   # Handle non-empty DB safely (prevents migration errors)
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000
+      database: 1   # Use separate Redis DB for tests (avoids affecting main app data)
+
+server:
+  port: 0   # Use random port to avoid conflicts during tests
+
+logging:
+  level:
+    root: warn    # Reduce log noise, show only important messages
