@@ -1,21 +1,18 @@
 package com.rapidlink.services.impl;
 
-import com.rapidlink.encoder.Base62Encoder;
 import com.rapidlink.entity.ShortUrl;
-import com.rapidlink.exception.*;
+import com.rapidlink.exception.InvalidStoredUrlException;
+import com.rapidlink.exception.ShortUrlNotFoundException;
+import com.rapidlink.exception.UrlDeactivatedException;
+import com.rapidlink.exception.UrlExpiredException;
 import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.ClickTrackingService;
-import com.rapidlink.services.ShortUrlService;
 import com.rapidlink.services.UrlCacheService;
+import com.rapidlink.services.UrlRedirectService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-
 import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -24,82 +21,19 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class ShortUrlServiceImpl implements ShortUrlService {
+class UrlRedirectServiceImpl implements UrlRedirectService {
 
+    private final RapidLinkMetrics metrics;
     private final ShortUrlRepository repository;
     private final UrlCacheService cacheService;
-    private final RapidLinkMetrics metrics;
     private final ClickTrackingService clickService;
 
     private static final long MIN_CACHE_TTL_SECONDS = 5;
-    private static final int MAX_URL_LENGTH = 2048;
 
-    // Creates a short URL for the given original URL
-    @Override
-    @Transactional
-    public String createShortUrl(String originalUrl) {
-
-        // timeUrlCreate() wraps the ENTIRE creation flow
-        return metrics.timeUrlCreate(() -> {
-
-            log.info("Creating short URL request received");
-
-            URI validatedUri = validateAndNormalizeUrl(originalUrl);
-            String normalizedUrl = validatedUri.toString();
-
-            Long seqId = repository.nextSeqId();
-            if (seqId == null) {
-
-                // record Url creation failure
-                metrics.recordUrlCreateFailure();
-                throw new ShortCodeGenerationException("DB Sequence returned null");
-            }
-
-            // TODO: Current implementation is predictable (seq_id → Base62).
-            // Consider adding obfuscation (e.g., hashing or ID scrambling)
-            // to prevent enumeration attacks in public URLs.
-            String shortCode = Base62Encoder.encode(seqId);
-
-            ShortUrl url = ShortUrl.builder()
-                    .originalUrl(normalizedUrl)
-                    .seqId(seqId)
-                    .shortCode(shortCode)
-                    .isActive(true)
-                    .clickCount(0L)
-                    .build();
-
-            try {
-                // Force immediate DB flush so constraint violations are thrown here
-                // (otherwise exceptions occur at transaction commit, outside this try-catch)
-                repository.saveAndFlush(url);
-            } catch (DataIntegrityViolationException ex) {
-
-                // record Url creation failure
-                metrics.recordUrlCreateFailure();
-                log.error("DB constraint violation during short URL creation — shortCode={}", shortCode, ex);
-                throw new ShortCodeGenerationException();
-            }
-
-            // Write-through cache warm — fires only AFTER @Transactional commits
-            registerCacheAfterCommit(shortCode, normalizedUrl);
-
-            // TODO: Update setActiveUrlCount() periodically (scheduler) or maintain counter manually (event-driven)
-            // Update active URL gauge AFTER successful DB save.
-            // This keeps the gauge accurate even if URLs are expired
-            long activeUrlCount = repository.countByExpiresAtAfterOrExpiresAtIsNull(LocalDateTime.now());
-            metrics.setActiveUrlCount(activeUrlCount);
-
-            // Set Url creation success
-            metrics.recordUrlCreateSuccess();
-
-            log.info("Short URL created successfully: shortCode={}", shortCode);
-            return shortCode;
-        });
-    }
 
     // Resolves short code with original URL and tracks click
     @Override
-    public URI resolveUrl(String shortCode) {
+    public URI getRedirectUrl(String shortCode) {
 
 
         // timeRedirect() wraps the ENTIRE resolution flow.
@@ -123,12 +57,12 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 }
 
                 log.info("Cache HIT — shortCode={}", shortCode);
-                result = resolveFromCacheOrFallback(shortCode, cached.get());
+                result = getFromCacheOrFallback(shortCode, cached.get());
             }else {
 
                 //  If cache miss, DB lookup
                 log.info("Cache MISS — shortCode={}, querying DB", shortCode);
-                result = resolveFromDatabase(shortCode);
+                result = getFromDatabase(shortCode);
             }
 
             // Increment Redirect success at the end
@@ -141,28 +75,11 @@ public class ShortUrlServiceImpl implements ShortUrlService {
     // -------- Helper Methods --------
 
     /**
-     * Write-through cache warm — registered AFTER repository.save() but only
-     * fires AFTER the surrounding @Transactional commits.
-     * This prevents caching a URL whose DB write later rolls back (ghost cache entry).
-     */
-    private void registerCacheAfterCommit(String shortCode, String url){
-
-        TransactionSynchronizationManager.registerSynchronization(
-                new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        cacheService.save(shortCode, url); // warm with real URL
-                    }
-                }
-        );
-    }
-
-    /**
      * Resolves a URL from cache and tracks the click.
      * Falls back to DB if the cached entry is stale (URL deactivated/expired since caching).
      * Evicts and throws if the cached URL itself is malformed.
      */
-    private URI resolveFromCacheOrFallback(String shortCode, String cachedUrl){
+    private URI getFromCacheOrFallback(String shortCode, String cachedUrl){
         try {
             URI uri = URI.create(cachedUrl);
 
@@ -175,7 +92,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
         } catch (IllegalArgumentException ex) {
             log.error("Corrupted URL in cache, evicting and retrying from DB — shortCode={}", shortCode);
             cacheService.delete(shortCode);
-            return resolveFromDatabase(shortCode);  // DB is source of truth
+            return getFromDatabase(shortCode);  // DB is source of truth
         }
     }
 
@@ -184,7 +101,7 @@ public class ShortUrlServiceImpl implements ShortUrlService {
      * Handles the race condition where a URL is deactivated between validation and click tracking.
      * Acts as the source of truth — DB is always trusted over cache.
      */
-    private URI resolveFromDatabase(String shortCode){
+    private URI getFromDatabase(String shortCode){
 
         // findAndValidate throws ShortUrlNotFoundException if the code doesn't exist.
         // We intercept that specific case to write the negative sentinel BEFORE rethrowing.
@@ -281,46 +198,5 @@ public class ShortUrlServiceImpl implements ShortUrlService {
                 });
         validateUrl(url);
         return url;
-    }
-
-    // Parses and validates the input URL; allows only HTTP/HTTPS and rejects malformed URLs
-    private URI validateAndNormalizeUrl(String originalUrl) {
-
-        // Defensive null/blank check (DTO validation may not always apply)
-        if (originalUrl == null || originalUrl.isBlank()) {
-            metrics.recordUrlCreateFailure();
-            throw new BadRequestException("URL must not be empty");
-        }
-
-        if (originalUrl.length() > MAX_URL_LENGTH) {
-            metrics.recordUrlCreateFailure();
-            throw new BadRequestException("URL exceeds maximum allowed length");
-        }
-
-        try {
-            URI uri = URI.create(originalUrl);
-
-            // Validate scheme (only HTTP/HTTPS allowed)
-            String scheme = uri.getScheme();
-            if (scheme == null ||
-                    !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-
-                metrics.recordUrlCreateFailure();
-                throw new BadRequestException("Only HTTP/HTTPS URLs are allowed");
-            }
-
-            // Validate host presence (required for proper redirection)
-            String host = uri.getHost();
-            if (host == null || host.isBlank()) {
-                metrics.recordUrlCreateFailure();
-                throw new BadRequestException("Invalid URL: host is missing");
-            }
-
-            return uri;
-
-        } catch (IllegalArgumentException ex) {
-            metrics.recordUrlCreateFailure();
-            throw new BadRequestException("Invalid URL format");
-        }
     }
 }
