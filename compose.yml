@@ -3,17 +3,18 @@ services:
   postgres:
     image: postgres:16
     container_name: rapidlink-postgres
-    restart: always
+    restart: always   # Restart container automatically if it stops
     environment:
-      POSTGRES_DB: rapidlink
+      POSTGRES_DB: rapidlink    # Main application database
       POSTGRES_USER: rapidlink_user
       POSTGRES_PASSWORD: rapidlink_password
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data    # Persist DB data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql    # Run script on first startup to create test database
     networks:
-      - rapidlink-network
+      - rapidlink-network   # Shared network for all services
 
   redis:
     image: redis:7
@@ -53,8 +54,8 @@ services:
 
 
 volumes:
-  postgres_data:
-  grafana_data:
+  postgres_data:    # Stores Postgres data persistently
+  grafana_data:   # Stores Grafana data persistently
 
 networks:
-  rapidlink-network:
+  rapidlink-network:    # Internal network for service communication
