@@ -153,6 +153,12 @@ class ClickTrackingRepositoryTest {
         repository.batchIncrement(counts);
         entityManager.clear();
 
-        assertEquals(1L, shortUrlRepository.findByShortCode("code10").get().getClickCount());
+        // Validate first chunk
+        assertEquals(1L, shortUrlRepository.findByShortCode("code0").get().getClickCount());
+        assertEquals(1L, shortUrlRepository.findByShortCode("code499").get().getClickCount());
+
+        // Validate second chunk
+        assertEquals(1L, shortUrlRepository.findByShortCode("code500").get().getClickCount());
+        assertEquals(1L, shortUrlRepository.findByShortCode("code599").get().getClickCount());
     }
 }

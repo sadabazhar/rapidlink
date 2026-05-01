@@ -107,6 +107,9 @@ class ShortUrlRepositoryTest {
     void shouldCountOnlyNonExpiredUrls_whenMixedExpiryStatesExist() {
         LocalDateTime now = LocalDateTime.now();
 
+        // Baseline count before test inserts
+        long baseline = repository.countByExpiresAtAfterOrExpiresAtIsNull(now);
+
         ShortUrl active = ShortUrl.builder()
                 .seqId(2001L)
                 .shortCode("active")
@@ -136,9 +139,10 @@ class ShortUrlRepositoryTest {
         entityManager.persist(expired);
         entityManager.flush();
 
-        long count = repository.countByExpiresAtAfterOrExpiresAtIsNull(now);
+        long countAfterInsert = repository.countByExpiresAtAfterOrExpiresAtIsNull(now);
 
-        assertEquals(2, count); // active + future
+        // Only active + future should increase count
+        assertEquals(baseline + 2, countAfterInsert);
     }
 
 }
