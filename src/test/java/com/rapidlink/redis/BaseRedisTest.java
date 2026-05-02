@@ -3,6 +3,7 @@ package com.rapidlink.redis;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.test.context.ActiveProfiles;
@@ -44,9 +45,10 @@ public abstract class BaseRedisTest {
      */
     @BeforeEach
     void cleanRedis() {
-        redisTemplate.getConnectionFactory()
-                .getConnection()
-                .flushDb();
+        redisTemplate.execute((RedisCallback<Object>) connection -> {
+            connection.serverCommands().flushDb();
+            return null;
+        });
     }
 
     /**
