@@ -1,22 +1,25 @@
 package com.rapidlink.services.impl;
 
+import com.rapidlink.dto.cache.CacheResult;
+import com.rapidlink.dto.cache.CachedShortUrl;
+import com.rapidlink.dto.internal.RedirectResolution;
+import com.rapidlink.dto.request.analytics.ClickEventRequest;
 import com.rapidlink.entity.ShortUrl;
 import com.rapidlink.exception.InvalidStoredUrlException;
 import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.exception.UrlDeactivatedException;
 import com.rapidlink.exception.UrlExpiredException;
+import com.rapidlink.mapper.CachedShortUrlMapper;
 import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.repository.ShortUrlRepository;
-import com.rapidlink.services.ClickTrackingService;
-import com.rapidlink.services.UrlCacheService;
-import com.rapidlink.services.UrlRedirectService;
+import com.rapidlink.services.*;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -27,28 +30,29 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
     private final ShortUrlRepository repository;
     private final UrlCacheService cacheService;
     private final ClickTrackingService clickService;
+    private final AnalyticsEventProducer analyticsEventProducer;
+    private final ClickMetadataExtractor clickMetadataExtractor;
 
     private static final long MIN_CACHE_TTL_SECONDS = 5;
 
 
     // Resolves short code with original URL and tracks click
     @Override
-    public URI getRedirectUrl(String shortCode) {
+    public URI getRedirectUrl(String shortCode, HttpServletRequest request) {
 
 
         // timeRedirect() wraps the ENTIRE resolution flow.
         return metrics.timeRedirect(() -> {
 
-            URI result;
+            RedirectResolution result;
 
             // Cache check
-            Optional<String> cached = cacheService.get(shortCode);
-            if (cached.isPresent()) {
+            CacheResult cacheResult = cacheService.get(shortCode);
 
-                // Negative cache HIT — this code was confirmed non-existent.
-                // Skip DB entirely and return 404 immediately.
-                if (cacheService.isNotFoundSentinel(cached.get())) {
+            switch (cacheResult.type()){
 
+                // Negative cache HIT — Skip DB entirely and return 404 immediately.
+                case NEGATIVE_HIT -> {
                     // Even shortcode exists in negative cache, still count as not found.
                     metrics.recordRedirectNotFound();
 
@@ -56,18 +60,43 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
                     throw new ShortUrlNotFoundException("Short URL not found, with this shortcode: " + shortCode);
                 }
 
-                log.info("Cache HIT — shortCode={}", shortCode);
-                result = getFromCacheOrFallback(shortCode, cached.get());
-            }else {
+                // Cache HIT — fetch the value from cache
+                case HIT -> {
+                    log.info("Cache HIT — shortCode={}", shortCode);
+                    result = getFromCacheOrFallback(shortCode, cacheResult.value());
+                }
 
-                //  If cache miss, DB lookup
-                log.info("Cache MISS — shortCode={}, querying DB", shortCode);
-                result = getFromDatabase(shortCode);
+                // Cache MISS — DB lookup
+                case MISS -> {
+                    log.info("Cache MISS — shortCode={}, querying DB", shortCode);
+                    result = getFromDatabase(shortCode);
+                }
+
+                default -> {
+                    log.error("Unexpected cache result type — shortCode={}, type={}", shortCode, cacheResult.type());
+                    throw new IllegalStateException(
+                            "Unexpected cache result type: " + cacheResult.type()
+                    );
+                }
             }
+
+            // Click event should not fail redirect
+            try{
+                // Extract the metadata from request
+                ClickEventRequest clickEvent = clickMetadataExtractor.extract(result.shortUrlId(), request);
+
+                // Publish the event into redis stream
+                analyticsEventProducer.publish(clickEvent);
+            }catch (Exception ex){
+                log.error("Analytics pipeline failure", ex);
+            }
+
+            // Atomic click increment in Redis
+            clickService.increment(shortCode);
 
             // Increment Redirect success at the end
             metrics.recordRedirectSuccess();
-            return result;
+            return result.uri();
         });
     }
 
@@ -79,14 +108,17 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
      * Falls back to DB if the cached entry is stale (URL deactivated/expired since caching).
      * Evicts and throws if the cached URL itself is malformed.
      */
-    private URI getFromCacheOrFallback(String shortCode, String cachedUrl){
+    private RedirectResolution getFromCacheOrFallback(String shortCode, CachedShortUrl cachedUrl){
         try {
-            URI uri = URI.create(cachedUrl);
 
-            // Atomic click increment in Redis
-            clickService.increment(shortCode);
+            validateCachedUrl(cachedUrl);
 
-            return uri;
+            URI uri = parseUri(cachedUrl.originalUrl(), cachedUrl.shortCode());
+
+            return RedirectResolution.builder()
+                    .shortUrlId(cachedUrl.id())
+                    .uri(uri)
+                    .build();
 
             // evict and fall back to DB, user gets their redirect
         } catch (IllegalArgumentException ex) {
@@ -101,7 +133,7 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
      * Handles the race condition where a URL is deactivated between validation and click tracking.
      * Acts as the source of truth — DB is always trusted over cache.
      */
-    private URI getFromDatabase(String shortCode){
+    private RedirectResolution getFromDatabase(String shortCode){
 
         // findAndValidate throws ShortUrlNotFoundException if the code doesn't exist.
         // We intercept that specific case to write the negative sentinel BEFORE rethrowing.
@@ -134,12 +166,15 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
         // Build URI FIRST (avoid caching invalid URL)
         URI uri = parseUri(url.getOriginalUrl(), shortCode);
 
-        // Atomic click increment in Redis
-        clickService.increment(shortCode);
+        // cache the short url obj
+        CachedShortUrl cachedShortUrl = CachedShortUrlMapper.toCachedUrl(url);
 
-        cacheWithAlignedTtl(shortCode, url);
+        cacheWithAlignedTtl(shortCode, cachedShortUrl);
         log.info("Redirecting — shortCode={}", shortCode);
-        return uri;
+        return RedirectResolution.builder()
+                .shortUrlId(url.getId())
+                .uri(uri)
+                .build();
     }
 
     /**
@@ -148,15 +183,15 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
      *   - URL expires soon   → cache only if remaining TTL > MIN_CACHE_TTL_SECONDS
      *   - URL nearly expired → skip caching to avoid serving stale data
      */
-    private void cacheWithAlignedTtl(String shortCode, ShortUrl url) {
-        if (url.getExpiresAt() == null) {
-            cacheService.save(shortCode, url.getOriginalUrl());
+    private void cacheWithAlignedTtl(String shortCode, CachedShortUrl cachedShortUrl) {
+        if (cachedShortUrl.expiresAt() == null) {
+            cacheService.save(shortCode, cachedShortUrl);
             return;
         }
 
-        Duration remainingTtl = Duration.between(LocalDateTime.now(), url.getExpiresAt());
+        Duration remainingTtl = Duration.between(LocalDateTime.now(), cachedShortUrl.expiresAt());
         if (!remainingTtl.isNegative() && remainingTtl.getSeconds() > MIN_CACHE_TTL_SECONDS) {
-            cacheService.save(shortCode, url.getOriginalUrl(), remainingTtl);
+            cacheService.save(shortCode, cachedShortUrl, remainingTtl);
         } else {
             log.debug("Skipping cache — TTL too short — shortCode={}, remainingTtl={}s",
                     shortCode, remainingTtl.getSeconds());
@@ -173,10 +208,31 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
         }
     }
 
-    // Validates that a short URL is active and not expired.
-    private void validateUrl(ShortUrl url) {
+    // Validates that a cached short URL is active and not expired.
+    private void validateCachedUrl(CachedShortUrl url) {
 
-        if (!url.getIsActive()) {
+        if (Boolean.FALSE.equals(url.isActive())) {
+
+            cacheService.delete(url.shortCode());
+            log.warn("Attempt to access deactivated cached URL: shortCode={}", url.shortCode());
+            metrics.recordRedirectNotFound();
+            throw new UrlDeactivatedException("Short URL is deactivated, with this shortcode : " + url.shortCode());
+        }
+
+        if (url.expiresAt() != null &&
+                url.expiresAt().isBefore(LocalDateTime.now())) {
+
+            cacheService.delete(url.shortCode());
+            log.warn("Attempt to access expired cached URL: shortCode={}", url.shortCode());
+            metrics.recordRedirectExpired();
+            throw new UrlExpiredException("Short URL is expired, with this shortcode : " + url.shortCode());
+        }
+    }
+
+    // Validates that a short URL is active and not expired.
+    private void validateDatabaseUrl(ShortUrl url) {
+
+        if (Boolean.FALSE.equals(url.getIsActive())) {
             log.warn("Attempt to access deactivated URL: shortCode={}", url.getShortCode());
             throw new UrlDeactivatedException("Short URL is deactivated, with this shortcode : " + url.getShortCode());
         }
@@ -196,7 +252,7 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
                     log.warn("Short URL not found — shortCode={}", shortCode);
                     return new ShortUrlNotFoundException("Short URL not found, with this shortcode : " + shortCode);
                 });
-        validateUrl(url);
+        validateDatabaseUrl(url);
         return url;
     }
 }

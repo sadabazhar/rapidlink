@@ -1,49 +1,48 @@
 package com.rapidlink.services.impl;
 
+import com.rapidlink.dto.cache.CacheResult;
+import com.rapidlink.dto.cache.CacheResultType;
+import com.rapidlink.dto.cache.CachedShortUrl;
+import com.rapidlink.mapper.CachedShortUrlMapper;
 import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.UrlCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.RedisConnectionFailureException;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-
 import java.time.Duration;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class UrlCacheServiceImpl implements UrlCacheService {
 
-    private final StringRedisTemplate redisTemplate;
+    private final RedisTemplate<String, CachedShortUrl> cachedShortUrlRedisTemplate;
     private final RapidLinkMetrics metrics;
 
     private static final String PREFIX = "url:";
-    private static final String NOT_FOUND_SENTINEL = "__NOT_FOUND__";
     private static final Duration DEFAULT_TTL = Duration.ofHours(24);
     private static final Duration NEGATIVE_CACHE_TTL = Duration.ofSeconds(60);
 
     // Fetch original URL from Redis cache
     @Override
-    public Optional<String> get(String shortCode) {
+    public CacheResult get(String shortCode) {
 
-        if (shortCode == null || shortCode.isBlank()) {
-            return Optional.empty();
-        }
+        if (shortCode == null || shortCode.isBlank()) return CacheResult.miss();
 
         String key = buildKey(shortCode);
 
         try{
 
-            String value = redisTemplate.opsForValue().get(key);
+            CachedShortUrl value = cachedShortUrlRedisTemplate.opsForValue().get(key);
 
             if (value == null) {
                 //RecordCache miss. bcz Redis has no entry for this key.
                 metrics.recordCacheMiss();
 
                 log.debug("Cache MISS for key: {}", key);
-                return Optional.empty();
+                return CacheResult.miss();
             }
 
             if (isNotFoundSentinel(value)) {
@@ -51,35 +50,35 @@ public class UrlCacheServiceImpl implements UrlCacheService {
                 metrics.recordNegativeCacheHit();
 
                 log.debug("Negative sentinel HIT for key: {}", key);
-                return Optional.of(value);
+                return CacheResult.negative(value);
             }
 
             // RecordCache cache hit. bcz Redis has the original URL.
             metrics.recordCacheHit();
 
             log.debug("Cache HIT cache service for key: {}", key);
-            return Optional.of(value);
+            return CacheResult.hit(value);
 
         }catch (RedisConnectionFailureException ex) {
             log.warn("Redis GET failed — key={}, falling back to DB", key);
-            return Optional.empty();
+            return CacheResult.miss();
         } catch (RuntimeException ex) {
             log.error("Unexpected Redis error during get — key={}", key, ex);
-            return Optional.empty();
+            return CacheResult.miss();
         }
     }
 
     // Save mapping into Redis with default TTL
     @Override
-    public void save(String shortCode, String originalUrl) {
+    public void save(String shortCode, CachedShortUrl cachedShortUrl) {
 
-        if(isInvalid(shortCode, originalUrl)) return;
+        if(isInvalid(shortCode, cachedShortUrl)) return;
 
         String key = buildKey(shortCode);
 
         try{
 
-            redisTemplate.opsForValue().set(key, originalUrl, DEFAULT_TTL);
+            cachedShortUrlRedisTemplate.opsForValue().set(key, cachedShortUrl, DEFAULT_TTL);
             log.debug("Cached shortCode={} with default TTL={}h", shortCode, DEFAULT_TTL.toHours());
 
         }catch (RedisConnectionFailureException ex) {
@@ -91,15 +90,15 @@ public class UrlCacheServiceImpl implements UrlCacheService {
 
     // Save mapping into Redis with custom TTL
     @Override
-    public void save(String shortCode, String originalUrl, Duration ttl) {
+    public void save(String shortCode, CachedShortUrl cachedShortUrl, Duration ttl) {
 
-        if(isInvalid(shortCode, originalUrl)) return;
+        if(isInvalid(shortCode, cachedShortUrl)) return;
 
         String key = buildKey(shortCode);
 
         try{
 
-            redisTemplate.opsForValue().set(key, originalUrl, ttl);
+            cachedShortUrlRedisTemplate.opsForValue().set(key, cachedShortUrl, ttl);
             log.debug("Cached shortCode={} with TTL={}s", shortCode, ttl.getSeconds());
 
         }catch (RedisConnectionFailureException ex) {
@@ -122,7 +121,7 @@ public class UrlCacheServiceImpl implements UrlCacheService {
 
         try{
 
-            redisTemplate.delete(key);
+            cachedShortUrlRedisTemplate.delete(key);
             log.debug("Cache evicted — shortCode={}", shortCode);
 
         }catch (RedisConnectionFailureException ex) {
@@ -143,8 +142,12 @@ public class UrlCacheServiceImpl implements UrlCacheService {
             return;
         }
         String key = buildKey(shortCode);
+
+        // null refer to negative cache
+        CachedShortUrl shortUrl = CachedShortUrlMapper.toNegativeCachedUrl();
+
         try {
-            redisTemplate.opsForValue().set(key, NOT_FOUND_SENTINEL, NEGATIVE_CACHE_TTL);
+            cachedShortUrlRedisTemplate.opsForValue().set(key, shortUrl, NEGATIVE_CACHE_TTL);
             log.debug("Negative cache entry written — shortCode={}, TTL={}m",
                     shortCode, NEGATIVE_CACHE_TTL.toMinutes());
         } catch (RedisConnectionFailureException ex) {
@@ -155,12 +158,12 @@ public class UrlCacheServiceImpl implements UrlCacheService {
     }
 
     /**
-     * Returns true if the cached value is a negative sentinel (i.e., "not found" was cached).
+     * Returns true if the cached value is a negative sentinel (i.e., original url value is null as cached).
      * Callers should check this BEFORE treating the Optional value as a real URL.
      */
     @Override
-    public boolean isNotFoundSentinel(String cachedValue) {
-        return NOT_FOUND_SENTINEL.equals(cachedValue);
+    public boolean isNotFoundSentinel(CachedShortUrl cachedShortUrl) {
+        return cachedShortUrl != null && cachedShortUrl.notFound();
     }
 
     // ---------- Helper Methods --------
@@ -171,15 +174,27 @@ public class UrlCacheServiceImpl implements UrlCacheService {
     }
 
     // preventing silent storage of empty or null values in Redis.
-    private boolean isInvalid(String shortCode, String originalUrl) {
-        if (shortCode == null || shortCode.isBlank()) {
+    private boolean isInvalid(String shortCode, CachedShortUrl cachedShortUrl) {
+
+        if( cachedShortUrl == null){
+            log.warn("Cache save skipped — short url object is blank");
+            return true;
+        }
+
+        if (!shortCode.equals(cachedShortUrl.shortCode())) {
+            log.warn("Cache save skipped — key/object shortcode mismatch");
+            return true;
+        }
+
+        if (cachedShortUrl.shortCode().isBlank()) {
             log.warn("Cache save skipped — shortCode is blank");
             return true;
         }
-        if (originalUrl == null || originalUrl.isBlank()) {
-            log.warn("Cache save skipped — originalUrl is blank for shortCode={}", shortCode);
+        if (cachedShortUrl.originalUrl() == null || cachedShortUrl.originalUrl().isBlank()) {
+            log.warn("Cache save skipped — originalUrl is blank for shortCode={}", cachedShortUrl.shortCode());
             return true;
         }
+
         return false;
     }
 }

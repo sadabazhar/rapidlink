@@ -1,9 +1,11 @@
 package com.rapidlink.services.impl;
 
+import com.rapidlink.dto.cache.CachedShortUrl;
 import com.rapidlink.encoder.Base62Encoder;
 import com.rapidlink.entity.ShortUrl;
 import com.rapidlink.exception.BadRequestException;
 import com.rapidlink.exception.ShortCodeGenerationException;
+import com.rapidlink.mapper.CachedShortUrlMapper;
 import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.UrlCacheService;
@@ -16,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-
 import java.net.URI;
 import java.time.LocalDateTime;
 
@@ -75,7 +76,7 @@ class UrlManagementServiceImpl implements UrlManagementService {
             try {
                 // Force immediate DB flush so constraint violations are thrown here
                 // (otherwise exceptions occur at transaction commit, outside this try-catch)
-                repository.saveAndFlush(url);
+                url = repository.saveAndFlush(url);
             } catch (DataIntegrityViolationException ex) {
 
                 // record Url creation failure
@@ -84,8 +85,10 @@ class UrlManagementServiceImpl implements UrlManagementService {
                 throw new ShortCodeGenerationException();
             }
 
+            CachedShortUrl shortUrl = CachedShortUrlMapper.toCachedUrl(url);
+
             // Write-through cache warm — fires only AFTER @Transactional commits
-            registerCacheAfterCommit(shortCode, normalizedUrl);
+            registerCacheAfterCommit(shortCode, shortUrl);
 
             // TODO: Update setActiveUrlCount() periodically (scheduler) or maintain counter manually (event-driven)
             // Update active URL gauge AFTER successful DB save.
@@ -106,13 +109,13 @@ class UrlManagementServiceImpl implements UrlManagementService {
      * fires AFTER the surrounding @Transactional commits.
      * This prevents caching a URL whose DB write later rolls back (ghost cache entry).
      */
-    private void registerCacheAfterCommit(String shortCode, String url){
+    private void registerCacheAfterCommit(String shortCode, CachedShortUrl shortUrl){
 
         TransactionSynchronizationManager.registerSynchronization(
                 new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        cacheService.save(shortCode, url); // warm with real URL
+                        cacheService.save(shortCode, shortUrl); // warm with real URL
                     }
                 }
         );
