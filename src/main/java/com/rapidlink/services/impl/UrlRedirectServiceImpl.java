@@ -17,6 +17,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -37,6 +39,7 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
 
 
     // Resolves short code with original URL and tracks click
+    @Transactional
     @Override
     public URI getRedirectUrl(String shortCode, HttpServletRequest request) {
 
@@ -88,6 +91,8 @@ class UrlRedirectServiceImpl implements UrlRedirectService {
                 // Publish the event into redis stream
                 analyticsEventProducer.publish(clickEvent);
             }catch (Exception ex){
+
+                metrics.recordAnalyticsPublishFailure();
                 log.error("Analytics pipeline failure", ex);
             }
 

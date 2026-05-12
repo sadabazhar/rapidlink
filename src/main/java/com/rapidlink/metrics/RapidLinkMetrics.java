@@ -1,9 +1,6 @@
 package com.rapidlink.metrics;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Gauge;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.*;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -57,6 +54,17 @@ public class RapidLinkMetrics {
     private Counter clickFlushToDbCounter;
     private Counter clickFlushFailureCounter;
 
+    private Counter analyticsPublishSuccessCounter;
+    private Counter analyticsPublishFailureCounter;
+    private Counter analyticsEventsReadCounter;
+    private Counter analyticsPendingReadCounter;
+    private Counter analyticsProcessSuccessCounter;
+    private Counter analyticsProcessFailureCounter;
+    private Counter analyticsRetryCounter;
+    private Counter analyticsRetryExhaustedCounter;
+    private Counter analyticsDlqCounter;
+    private DistributionSummary analyticsBatchSizeSummary;
+
     // ── Timers (latency tracking) ────────────────────────────────────────────
     // Automatically tracks count, total time, and percentiles
 
@@ -64,6 +72,7 @@ public class RapidLinkMetrics {
     private Timer urlCreateLatencyTimer;
     private Timer clickFetchLatencyTimer;
     private Timer clickFlushLatencyTimer;
+    private Timer analyticsBatchProcessingTimer;
 
     // ── Gauge (current state) ────────────────────────────────────────────────
     // Holds latest value; read during Prometheus scrape
@@ -197,6 +206,54 @@ public class RapidLinkMetrics {
                 .description("Current count of non-expired shortened URLs")
                 .register(registry);
 
+
+        // ── Analytics pipeline metrics ───────────────────────────────────────────────
+
+        analyticsPublishSuccessCounter = Counter.builder("rapidlink.analytics.publish.success")
+                .description("Analytics event published successfully to message broker")
+                .register(registry);
+
+        analyticsPublishFailureCounter = Counter.builder("rapidlink.analytics.publish.failure")
+                .description("Analytics event publish failed")
+                .register(registry);
+
+        analyticsEventsReadCounter = Counter.builder("rapidlink.analytics.events.read")
+                .description("Analytics events successfully read from stream")
+                .register(registry);
+
+        analyticsPendingReadCounter = Counter.builder("rapidlink.analytics.pending.read")
+                .description("Pending analytics events read for retry processing")
+                .register(registry);
+
+        analyticsProcessSuccessCounter = Counter.builder("rapidlink.analytics.process.success")
+                .description("Analytics event processed successfully")
+                .register(registry);
+
+        analyticsProcessFailureCounter = Counter.builder("rapidlink.analytics.process.failure")
+                .description("Analytics event processing failed")
+                .register(registry);
+
+        analyticsRetryCounter = Counter.builder("rapidlink.analytics.retry")
+                .description("Analytics event retry attempted")
+                .register(registry);
+
+        analyticsRetryExhaustedCounter = Counter.builder("rapidlink.analytics.retry.exhausted")
+                .description("Analytics event exceeded max retry attempts")
+                .register(registry);
+
+        analyticsDlqCounter = Counter.builder("rapidlink.analytics.dlq")
+                .description("Analytics event sent to dead-letter queue")
+                .register(registry);
+
+        analyticsBatchProcessingTimer = Timer.builder("rapidlink.analytics.batch.processing.latency")
+                .description("Time taken to process a full analytics batch")
+                .publishPercentiles(0.50, 0.95, 0.99)
+                .register(registry);
+
+        analyticsBatchSizeSummary = DistributionSummary.builder("rapidlink.analytics.batch.size")
+                .description("Distribution of analytics batch sizes processed")
+                .publishPercentiles(0.50, 0.95, 0.99)
+                .register(registry);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -229,6 +286,28 @@ public class RapidLinkMetrics {
 
     public void recordClickFlushToDb(long count) { clickFlushToDbCounter.increment(count); }
     public void recordClickFlushFailure() { clickFlushFailureCounter.increment(); }
+
+    // Analytics event publish
+    public void recordAnalyticsPublishSuccess() {analyticsPublishSuccessCounter.increment();}
+    public void recordAnalyticsPublishFailure() {analyticsPublishFailureCounter.increment();}
+
+    // Analytics event read
+    public void recordAnalyticsEventsRead(long count) {analyticsEventsReadCounter.increment(count);}
+    public void recordAnalyticsPendingRead(long count) {analyticsPendingReadCounter.increment(count);}
+
+    // Analytics processing
+    public void recordAnalyticsProcessSuccess(long count) {analyticsProcessSuccessCounter.increment(count);}
+    public void recordAnalyticsProcessFailure() {analyticsProcessFailureCounter.increment();}
+
+    // Retry handling
+    public void recordAnalyticsRetry() {analyticsRetryCounter.increment();}
+    public void recordAnalyticsRetryExhausted() {analyticsRetryExhaustedCounter.increment();}
+
+    // Dead-letter queue
+    public void recordAnalyticsDlq() {analyticsDlqCounter.increment();}
+
+    // Batch size distribution
+    public void recordAnalyticsBatchSize(int batchSize) {analyticsBatchSizeSummary.record(batchSize);}
 
 
     // Error
@@ -267,8 +346,9 @@ public class RapidLinkMetrics {
         return clickFlushLatencyTimer.record(operation);
     }
 
+    // Batch processing timer
+    public <T> T timeAnalyticsBatchProcessing(Supplier<T> operation) {return analyticsBatchProcessingTimer.record(operation);}
     // Gauge
     // Update active URL count when URLs are created or expired
     public void setActiveUrlCount(long count) { activeUrlCount.set(count); }
-
 }

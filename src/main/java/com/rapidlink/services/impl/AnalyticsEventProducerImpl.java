@@ -10,6 +10,7 @@ import org.springframework.data.redis.connection.stream.ObjectRecord;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import com.rapidlink.metrics.RapidLinkMetrics;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +21,7 @@ public class AnalyticsEventProducerImpl implements AnalyticsEventProducer {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final RapidLinkMetrics metrics;
 
     @Override
     public void publish(ClickEventRequest event) {
@@ -33,14 +35,22 @@ public class AnalyticsEventProducerImpl implements AnalyticsEventProducer {
 
             redisTemplate.opsForStream().add(eventRecord);
 
+            metrics.recordAnalyticsPublishSuccess();
+
             log.debug("Published analytics event to Redis Stream for shortUrlId={}",
                     event.shortUrlId());
 
         } catch (JsonProcessingException e) {
+
+            metrics.recordAnalyticsPublishFailure();
+
             log.error("Failed to serialize analytics event for shortUrlId={}",
                     event.shortUrlId(), e);
 
         } catch (Exception e) {
+
+            metrics.recordAnalyticsPublishFailure();
+
             log.error("Failed to publish analytics event to Redis Stream for shortUrlId={}",
                     event.shortUrlId(), e);
         }
