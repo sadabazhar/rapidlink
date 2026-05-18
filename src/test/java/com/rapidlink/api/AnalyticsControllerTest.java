@@ -2,12 +2,16 @@ package com.rapidlink.api;
 
 import com.rapidlink.controller.AnalyticsController;
 import com.rapidlink.dto.response.analytics.AnalyticsOverviewResponse;
+import com.rapidlink.exception.GlobalExceptionHandler;
+import com.rapidlink.exception.ShortUrlNotFoundException;
+import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.AnalyticsQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,6 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 @WebMvcTest(AnalyticsController.class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler.class)
 class AnalyticsControllerTest {
 
     @Autowired
@@ -29,6 +34,9 @@ class AnalyticsControllerTest {
 
     @MockitoBean
     private AnalyticsQueryService analyticsQueryService;
+
+    @MockitoBean
+    private RapidLinkMetrics metrics;
 
     private AnalyticsOverviewResponse analyticsResponse;
     private UUID shortUrlId;
@@ -101,7 +109,7 @@ class AnalyticsControllerTest {
     void shouldReturn404WhenShortUrlNotFound() throws Exception {
 
         when(analyticsQueryService.getOverview("missing"))
-                .thenThrow(new IllegalArgumentException("Short URL not found"));
+                .thenThrow(new ShortUrlNotFoundException("Short URL not found"));
 
         mockMvc.perform(
                         get("/api/analytics/missing")

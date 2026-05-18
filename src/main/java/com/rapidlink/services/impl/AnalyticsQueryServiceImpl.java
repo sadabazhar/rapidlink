@@ -2,6 +2,7 @@ package com.rapidlink.services.impl;
 
 import com.rapidlink.dto.response.analytics.AnalyticsOverviewResponse;
 import com.rapidlink.entity.ShortUrl;
+import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.repository.ClickEventRepository;
 import com.rapidlink.services.AnalyticsQueryService;
 import com.rapidlink.repository.ShortUrlRepository;
@@ -26,7 +27,7 @@ public class AnalyticsQueryServiceImpl implements AnalyticsQueryService {
 
         ShortUrl shortUrl = shortUrlRepository.findByShortCode(shortCode)
                 .orElseThrow(() ->
-                        new IllegalArgumentException("Short URL not found"));
+                        new ShortUrlNotFoundException("Short URL not found"));
 
         UUID shortUrlId = shortUrl.getId();
 
