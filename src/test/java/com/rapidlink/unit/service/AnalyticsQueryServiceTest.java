@@ -2,6 +2,7 @@ package com.rapidlink.unit.service;
 
 import com.rapidlink.dto.response.analytics.AnalyticsOverviewResponse;
 import com.rapidlink.entity.ShortUrl;
+import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.repository.ClickEventRepository;
 import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.impl.AnalyticsQueryServiceImpl;
@@ -101,8 +102,8 @@ class AnalyticsQueryServiceTest {
         when(shortUrlRepository.findByShortCode("missing"))
                 .thenReturn(Optional.empty());
 
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        ShortUrlNotFoundException exception = assertThrows(
+                ShortUrlNotFoundException.class,
                 () -> analyticsQueryService.getOverview("missing")
         );
 
