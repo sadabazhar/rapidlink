@@ -32,7 +32,7 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
         SELECT COALESCE(c.country, 'UNKNOWN'), COUNT(c)
         FROM ClickEvent c
         WHERE c.shortUrl.id = :shortUrlId
-        GROUP BY c.country
+        GROUP BY COALESCE(c.country, 'UNKNOWN')
     """)
     List<Object[]> getCountryBreakdown(@Param("shortUrlId") UUID shortUrlId);
 
@@ -43,7 +43,7 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
         SELECT COALESCE(c.deviceType, 'UNKNOWN'), COUNT(c)
         FROM ClickEvent c
         WHERE c.shortUrl.id = :shortUrlId
-        GROUP BY c.deviceType
+        GROUP BY COALESCE(c.deviceType, 'UNKNOWN')
     """)
     List<Object[]> getDeviceBreakdown(@Param("shortUrlId") UUID shortUrlId);
 
@@ -54,7 +54,7 @@ public interface ClickEventRepository extends JpaRepository<ClickEvent, Long> {
         SELECT COALESCE(c.referrer, 'Direct'), COUNT(c)
         FROM ClickEvent c
         WHERE c.shortUrl.id = :shortUrlId
-        GROUP BY c.referrer
+        GROUP BY COALESCE(c.referrer, 'Direct')
     """)
     List<Object[]> getReferrerBreakdown(@Param("shortUrlId") UUID shortUrlId);
 }
