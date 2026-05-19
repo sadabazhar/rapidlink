@@ -38,6 +38,7 @@ public class AnalyticsConsumerGroupInitializer {
             } else {
 
                 log.error("Failed to create consumer group", ex);
+                throw new IllegalStateException("Analytics consumer group initialization failed", ex);
             }
         }
     }

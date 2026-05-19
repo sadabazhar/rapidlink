@@ -352,21 +352,23 @@ public class AnalyticsEventConsumerScheduler {
      * - ACK removes from consumer pending state
      * - DELETE prevents stream from growing forever
      */
-    private void acknowledgeAndDelete(
+    private boolean acknowledgeAndDelete(
             MapRecord<String, Object, Object> record
     ) {
 
         try {
 
-            redisTemplate.opsForStream().acknowledge(
+            Long acked = redisTemplate.opsForStream().acknowledge(
                     GROUP_NAME,
                     record
             );
 
-            redisTemplate.opsForStream().delete(
+            Long deleted = redisTemplate.opsForStream().delete(
                     STREAM_KEY,
                     record.getId()
             );
+
+            return acked != null && acked > 0 && deleted != null && deleted > 0;
 
         } catch (Exception ex) {
 
@@ -376,6 +378,8 @@ public class AnalyticsEventConsumerScheduler {
                     ex
             );
         }
+
+        return false;
     }
 
     /**
@@ -424,13 +428,16 @@ public class AnalyticsEventConsumerScheduler {
 
                 boolean dlqSuccess = moveToDeadLetterQueue(record, retryCount, ex);
 
-                if(dlqSuccess){
+                if (dlqSuccess) {
 
                     metrics.recordAnalyticsDlq();
 
-                    acknowledgeAndDelete(record);
-
-                    redisTemplate.delete(retryKey);
+                    boolean removed = acknowledgeAndDelete(record);
+                    if (removed) {
+                        redisTemplate.delete(retryKey);
+                    }else {
+                        log.error("[ANALYTICS] DLQ write succeeded but ACK/DELETE failed for recordId={}", record.getId());
+                    }
                 }
 
             } else {

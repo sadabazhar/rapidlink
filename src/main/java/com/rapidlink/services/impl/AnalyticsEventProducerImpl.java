@@ -25,6 +25,15 @@ public class AnalyticsEventProducerImpl implements AnalyticsEventProducer {
 
     @Override
     public void publish(ClickEventRequest event) {
+
+        if (event == null) {
+            metrics.recordAnalyticsPublishFailure();
+            log.error("Failed to publish analytics event: event is null");
+            return;
+        }
+
+        String shortUrlId = String.valueOf(event.shortUrlId());
+
         try {
             String payload = objectMapper.writeValueAsString(event);
 
@@ -37,22 +46,19 @@ public class AnalyticsEventProducerImpl implements AnalyticsEventProducer {
 
             metrics.recordAnalyticsPublishSuccess();
 
-            log.debug("Published analytics event to Redis Stream for shortUrlId={}",
-                    event.shortUrlId());
+            log.debug("Published analytics event to Redis Stream for shortUrlId={}", shortUrlId);
 
         } catch (JsonProcessingException e) {
 
             metrics.recordAnalyticsPublishFailure();
 
-            log.error("Failed to serialize analytics event for shortUrlId={}",
-                    event.shortUrlId(), e);
+            log.error("Failed to serialize analytics event for shortUrlId={}", shortUrlId, e);
 
         } catch (Exception e) {
 
             metrics.recordAnalyticsPublishFailure();
 
-            log.error("Failed to publish analytics event to Redis Stream for shortUrlId={}",
-                    event.shortUrlId(), e);
+            log.error("Failed to publish analytics event to Redis Stream for shortUrlId={}", shortUrlId, e);
         }
     }
 }
