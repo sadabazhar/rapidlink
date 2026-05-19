@@ -94,6 +94,11 @@ public class UrlCacheServiceImpl implements UrlCacheService {
 
         if(isInvalid(shortCode, cachedShortUrl)) return;
 
+        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+            log.warn("Cache save skipped — invalid TTL for shortCode={}", shortCode);
+            return;
+        }
+
         String key = buildKey(shortCode);
 
         try{
@@ -176,8 +181,18 @@ public class UrlCacheServiceImpl implements UrlCacheService {
     // preventing silent storage of empty or null values in Redis.
     private boolean isInvalid(String shortCode, CachedShortUrl cachedShortUrl) {
 
+        if (shortCode == null || shortCode.isBlank()) {
+            log.warn("Cache save skipped — provided shortCode is blank");
+            return true;
+        }
+
         if( cachedShortUrl == null){
             log.warn("Cache save skipped — short url object is blank");
+            return true;
+        }
+
+        if (cachedShortUrl.shortCode() == null || cachedShortUrl.shortCode().isBlank()) {
+            log.warn("Cache save skipped — cached shortCode is blank");
             return true;
         }
 
@@ -186,10 +201,6 @@ public class UrlCacheServiceImpl implements UrlCacheService {
             return true;
         }
 
-        if (cachedShortUrl.shortCode().isBlank()) {
-            log.warn("Cache save skipped — shortCode is blank");
-            return true;
-        }
         if (cachedShortUrl.originalUrl() == null || cachedShortUrl.originalUrl().isBlank()) {
             log.warn("Cache save skipped — originalUrl is blank for shortCode={}", cachedShortUrl.shortCode());
             return true;
