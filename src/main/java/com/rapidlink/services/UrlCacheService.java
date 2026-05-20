@@ -1,19 +1,20 @@
 package com.rapidlink.services;
 
+import com.rapidlink.dto.cache.CacheResult;
+import com.rapidlink.dto.cache.CachedShortUrl;
 import java.time.Duration;
-import java.util.Optional;
 
 public interface UrlCacheService {
 
-    Optional<String> get(String shortCode);
+    CacheResult get(String shortCode);
 
-    void save(String shortCode, String originalUrl);
+    void save(String shortCode, CachedShortUrl cachedShortUrl);
 
-    void save(String shortCode, String originalUrl, Duration ttl);
+    void save(String shortCode, CachedShortUrl cachedShortUrl, Duration ttl);
 
     void delete(String shortCode);
 
-    boolean isNotFoundSentinel(String cachedValue);
+    boolean isNotFoundSentinel(CachedShortUrl cachedShortUrl);
 
     void saveNotFound(String shortCode);
 }
