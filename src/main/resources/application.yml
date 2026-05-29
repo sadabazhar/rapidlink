@@ -96,3 +96,11 @@ management:
             # p95 → slow users
             # p99 → worst-case latency
 
+# QR code generation configuration
+rapidlink:
+  base-url: http://localhost:8080/
+  qr:
+    default-size: 300
+    min-size: 100
+    max-size: 1000
+    format: PNG
