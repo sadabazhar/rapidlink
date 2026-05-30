@@ -1,6 +1,7 @@
 package com.rapidlink.controller;
 
 import com.rapidlink.config.RapidLinkProperties;
+import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.QrCodeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,15 +32,8 @@ public class QrController {
         int qrSize = Optional.ofNullable(size)
                 .orElse(rapidLinkProperties.getQr().getDefaultSize());
 
-        // Build short URL for QR generation
-        String shortUrl = rapidLinkProperties.getBaseUrl() + shortCode;
+        byte[] qrImage = qrCodeService.generateQrCode(shortCode, qrSize);
 
-        byte[] qrImage = qrCodeService.generateQrCode(shortUrl, qrSize);
-
-        //Todo: Must remove
-        log.info("Qr size :{}", qrSize);
-        log.info("ShortUrl :{}", shortUrl);
-        log.info("QR Img :{}", qrImage);
 
         return ResponseEntity.ok()
 
