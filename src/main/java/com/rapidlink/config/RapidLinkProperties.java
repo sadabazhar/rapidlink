@@ -4,6 +4,8 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
+
 /**
  * Configuration properties for QR code generation.
  *
@@ -32,5 +34,7 @@ public class RapidLinkProperties {
         private int maxSize = 1000;
 
         private String format = "PNG";
+
+        private Duration cacheTtl = Duration.ofDays(7);
     }
 }

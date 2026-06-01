@@ -10,7 +10,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -32,7 +31,7 @@ public class QrController {
         int qrSize = Optional.ofNullable(size)
                 .orElse(rapidLinkProperties.getQr().getDefaultSize());
 
-        byte[] qrImage = qrCodeService.generateQrCode(shortCode, qrSize);
+        byte[] qrImage = qrCodeService.getQrCode(shortCode, qrSize);
 
 
         return ResponseEntity.ok()

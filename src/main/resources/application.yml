@@ -104,3 +104,4 @@ rapidlink:
     min-size: 100
     max-size: 1000
     format: PNG
+    cache-ttl: 7d

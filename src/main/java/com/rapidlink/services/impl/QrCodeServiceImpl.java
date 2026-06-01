@@ -14,53 +14,83 @@ import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.exception.UrlDeactivatedException;
 import com.rapidlink.exception.UrlExpiredException;
 import com.rapidlink.repository.ShortUrlRepository;
+import com.rapidlink.services.QrCacheService;
 import com.rapidlink.services.QrCodeService;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
+@Slf4j
 public class QrCodeServiceImpl implements QrCodeService {
 
-    private RapidLinkProperties rapidLinkProperties;
+    private final RapidLinkProperties rapidLinkProperties;
     private final ShortUrlRepository shortUrlRepository;
+    private final QrCacheService qrCacheService;
 
+    /**
+     * Returns a QR image for the given short code.
+     * First checks Redis cache, then generates and caches the QR if needed.
+     */
     @Override
-    public byte[] generateQrCode(String shortCode, int size) {
+    public byte[] getQrCode(String shortCode, int size){
 
         validateRequest(shortCode, size);
-        validateShortCode(shortCode);
 
+        // Check if QR image is already cached
+        byte[] qrByte = qrCacheService.get(shortCode, size);
+
+        // Cache Hit
+        if (qrByte != null){
+
+            log.debug(
+                    "Returning QR from cache - shortCode={}, size={}",
+                    shortCode,
+                    size
+            );
+            return qrByte;
+        }
+
+        // Generate and cache QR when not found in cache
+        ShortUrl shortUrl = validateShortCode(shortCode);
+        qrByte = generateQrCode(shortCode, size);
+
+        // Use URL expiration time as QR cache TTL
+        Duration ttl = resolveCacheTtl(shortUrl);
+        qrCacheService.save(shortCode, size, qrByte, ttl);
+        log.debug(
+                "QR generated and cached - shortCode={}, size={}",
+                shortCode,
+                size
+        );
+
+        return qrByte;
+    }
+
+    // Helper methods
+
+    /**
+     * Generates a QR image from the RapidLink short URL.
+     */
+    private byte[] generateQrCode(String shortCode, int size) {
+
+        // Create the full URL that will be encoded in the QR
         String content = buildShortUrl(shortCode);
 
         try {
-            Map<EncodeHintType, Object> hints = new HashMap<>();
 
-            // Support UTF-8 content
-            hints.put(
-                    EncodeHintType.CHARACTER_SET,
-                    StandardCharsets.UTF_8.name()
-            );
+            // QR generation settings
+            Map<EncodeHintType, Object> hints = buildHints();
 
-            // Allow QR recovery if partially damaged
-            hints.put(
-                    EncodeHintType.ERROR_CORRECTION,
-                    ErrorCorrectionLevel.M
-            );
-
-            // White border around QR
-            hints.put(
-                    EncodeHintType.MARGIN,
-                    1
-            );
-
-            // Generate Matrix
+            // Create QR matrix from URL content
             QRCodeWriter qrCodeWriter = new QRCodeWriter();
 
             BitMatrix bitMatrix = qrCodeWriter.encode(
@@ -90,6 +120,38 @@ public class QrCodeServiceImpl implements QrCodeService {
         }
     }
 
+    /**
+     * Creates QR generation settings used by ZXing.
+     */
+    private Map<EncodeHintType, Object> buildHints(){
+
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+
+        // Support UTF-8 content
+        hints.put(
+                EncodeHintType.CHARACTER_SET,
+                StandardCharsets.UTF_8.name()
+        );
+
+        // Allow QR recovery if partially damaged
+        hints.put(
+                EncodeHintType.ERROR_CORRECTION,
+                ErrorCorrectionLevel.M
+        );
+
+        // White border around QR
+        hints.put(
+                EncodeHintType.MARGIN,
+                1
+        );
+
+        return hints;
+
+    }
+
+    /**
+     * Validates QR request parameters.
+     */
     private void validateRequest(String shortCode, int size) {
 
         if (shortCode == null || shortCode.isBlank()) {
@@ -109,16 +171,23 @@ public class QrCodeServiceImpl implements QrCodeService {
         }
     }
 
-    private void validateShortCode(String shortCode){
+    /**
+     * Verifies that the short URL exists and can still be used.
+     */
+    private ShortUrl validateShortCode(String shortCode){
+
+        // Load short URL from database
         ShortUrl shortUrl = shortUrlRepository.findByShortCode(shortCode)
                 .orElseThrow(()-> new ShortUrlNotFoundException("Short URL not found"));
 
+        // Block QR generation for inactive URLs
         if (Boolean.FALSE.equals(shortUrl.getIsActive())) {
             throw new UrlDeactivatedException(
                     "Short URL is not active"
             );
         }
 
+        // Block QR generation for expired URLs
         if (shortUrl.getExpiresAt() != null
                 && shortUrl.getExpiresAt().isBefore(LocalDateTime.now())) {
 
@@ -127,9 +196,31 @@ public class QrCodeServiceImpl implements QrCodeService {
             );
         }
 
+        return shortUrl;
     }
 
+    /**
+     * Builds the full RapidLink URL from a short code.
+     */
     private String buildShortUrl(String shortCode) {
         return rapidLinkProperties.getBaseUrl() + shortCode;
+    }
+
+    /**
+     * Determines how long the QR should stay in cache.
+     * If the URL expires, the QR cache expires with it.
+     */
+    private Duration resolveCacheTtl(ShortUrl shortUrl) {
+
+        // Use default cache TTL when URL never expires
+        if (shortUrl.getExpiresAt() == null) {
+            return rapidLinkProperties.getQr().getCacheTtl();
+        }
+
+        // Match QR cache lifetime with URL lifetime
+        return Duration.between(
+                LocalDateTime.now(),
+                shortUrl.getExpiresAt()
+        );
     }
 }
