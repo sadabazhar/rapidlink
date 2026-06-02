@@ -1,6 +1,7 @@
 package com.rapidlink.services.impl;
 
 import com.rapidlink.config.RapidLinkProperties;
+import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.QrCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class QrCacheServiceImpl implements QrCacheService {
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisTemplate<String, byte[]> qrRedisTemplate;
     private final RapidLinkProperties rapidLinkProperties;
+    private final RapidLinkMetrics rapidLinkMetrics;
 
     /**
      * Fetches a cached QR image from Redis.
@@ -49,11 +51,15 @@ public class QrCacheServiceImpl implements QrCacheService {
 
             if (qrBytes != null && qrBytes.length > 0) {
                 log.debug("QR cache HIT - key={}", key);
+
+                rapidLinkMetrics.recordQrCacheHit();
                 return qrBytes;
             }
 
 
             log.debug("QR cache MISS - key={}", key);
+
+            rapidLinkMetrics.recordQrCacheMiss();
             return null;
 
         } catch (RedisConnectionFailureException ex) {

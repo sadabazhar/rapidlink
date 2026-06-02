@@ -13,6 +13,7 @@ import com.rapidlink.exception.QrGenerationException;
 import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.exception.UrlDeactivatedException;
 import com.rapidlink.exception.UrlExpiredException;
+import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.QrCacheService;
 import com.rapidlink.services.QrCodeService;
@@ -35,6 +36,7 @@ public class QrCodeServiceImpl implements QrCodeService {
     private final RapidLinkProperties rapidLinkProperties;
     private final ShortUrlRepository shortUrlRepository;
     private final QrCacheService qrCacheService;
+    private final RapidLinkMetrics rapidLinkMetrics;
 
     /**
      * Returns a QR image for the given short code.
@@ -43,36 +45,43 @@ public class QrCodeServiceImpl implements QrCodeService {
     @Override
     public byte[] getQrCode(String shortCode, int size){
 
-        validateRequest(shortCode, size);
+        return rapidLinkMetrics.timeQrGenerationResponse(() -> {
+            rapidLinkMetrics.recordQrRequest();
 
-        // Check if QR image is already cached
-        byte[] qrByte = qrCacheService.get(shortCode, size);
+            validateRequest(shortCode, size);
 
-        // Cache Hit
-        if (qrByte != null){
+            // Check if QR image is already cached
+            byte[] qrByte = qrCacheService.get(shortCode, size);
 
+            // Cache Hit
+            if (qrByte != null){
+
+                log.debug(
+                        "Returning QR from cache - shortCode={}, size={}",
+                        shortCode,
+                        size
+                );
+                return qrByte;
+            }
+
+            // Generate and cache QR when not found in cache
+            ShortUrl shortUrl = validateShortCode(shortCode);
+            qrByte = generateQrCode(shortCode, size);
+
+            // Use URL expiration time as QR cache TTL
+            Duration ttl = resolveCacheTtl(shortUrl);
+            qrCacheService.save(shortCode, size, qrByte, ttl);
             log.debug(
-                    "Returning QR from cache - shortCode={}, size={}",
+                    "QR generated and cached - shortCode={}, size={}",
                     shortCode,
                     size
             );
+
+            rapidLinkMetrics.recordQrGenerationSuccess();
+
             return qrByte;
-        }
+        });
 
-        // Generate and cache QR when not found in cache
-        ShortUrl shortUrl = validateShortCode(shortCode);
-        qrByte = generateQrCode(shortCode, size);
-
-        // Use URL expiration time as QR cache TTL
-        Duration ttl = resolveCacheTtl(shortUrl);
-        qrCacheService.save(shortCode, size, qrByte, ttl);
-        log.debug(
-                "QR generated and cached - shortCode={}, size={}",
-                shortCode,
-                size
-        );
-
-        return qrByte;
     }
 
     // Helper methods
@@ -114,6 +123,9 @@ public class QrCodeServiceImpl implements QrCodeService {
             return outputStream.toByteArray();
 
         } catch (WriterException | IOException ex) {
+
+            rapidLinkMetrics.recordQrGenerationFailure();
+
             throw new QrGenerationException(
                     "Failed to generate QR code"
             );
