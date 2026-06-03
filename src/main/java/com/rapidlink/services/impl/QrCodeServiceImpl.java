@@ -61,6 +61,8 @@ public class QrCodeServiceImpl implements QrCodeService {
                         shortCode,
                         size
                 );
+
+                rapidLinkMetrics.recordQrGenerationSuccess();
                 return qrByte;
             }
 
