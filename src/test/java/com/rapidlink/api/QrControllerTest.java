@@ -2,6 +2,7 @@ package com.rapidlink.api;
 
 import com.rapidlink.config.RapidLinkProperties;
 import com.rapidlink.controller.QrController;
+import com.rapidlink.metrics.RapidLinkMetrics;
 import com.rapidlink.services.QrCodeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,9 +13,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(QrController.class)
@@ -31,10 +31,12 @@ class QrControllerTest {
     private RapidLinkProperties rapidLinkProperties;
 
     @MockitoBean
-    private RapidLinkProperties.Qr qrProperties;
+    private RapidLinkMetrics rapidLinkMetrics;
 
     @BeforeEach
     void setUp() {
+
+        RapidLinkProperties.Qr qrProperties = mock(RapidLinkProperties.Qr.class);
 
         when(rapidLinkProperties.getQr())
                 .thenReturn(qrProperties);
