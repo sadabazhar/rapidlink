@@ -1,7 +1,6 @@
 package com.rapidlink.controller;
 
 import com.rapidlink.config.RapidLinkProperties;
-import com.rapidlink.repository.ShortUrlRepository;
 import com.rapidlink.services.QrCodeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,15 +32,18 @@ public class QrController {
 
         byte[] qrImage = qrCodeService.getQrCode(shortCode, qrSize);
 
+        String format = rapidLinkProperties.getQr().getFormat().toLowerCase();
+        MediaType mediaType = MediaType.parseMediaType("image/" + format);
+
 
         return ResponseEntity.ok()
 
-                // Response type is PNG image
-                .contentType(MediaType.IMAGE_PNG)
+                // Response type image
+                .contentType(mediaType)
 
                 // Display image in browser with filename
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "inline; filename=\"qr-" + shortCode + ".png\"")
+                        "inline; filename=\"qr-" + shortCode + "." + format + "\"")
 
                 // Cache QR image for 1 day
                 .cacheControl(CacheControl.maxAge(1, TimeUnit.DAYS).cachePublic())
