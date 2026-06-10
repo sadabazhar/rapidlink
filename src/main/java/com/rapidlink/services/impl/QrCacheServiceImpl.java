@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -189,22 +190,32 @@ public class QrCacheServiceImpl implements QrCacheService {
             // Reconstruct cache keys from indexed sizes.
             List<String> qrKeys =
                     sizes.stream()
-                            .map(size ->
-                                    buildKey(
-                                            shortCode,
-                                            Integer.parseInt(size)
-                                    )
-                            )
+                            .map(rawSize -> {
+                                try {
+                                    return Integer.parseInt(rawSize);
+                                } catch (NumberFormatException ex) {
+                                    log.warn("Skipping malformed QR size index entry - shortCode={}, size={}", shortCode, rawSize);
+                                    return null;        // ← bad member becomes null
+                                }
+                            })
+                            .filter(Objects::nonNull) // ← null dropped, stream continues
+                            .map(parsedSize -> buildKey(shortCode, parsedSize))
                             .toList();
+
+            if (qrKeys.isEmpty()) {
+                log.warn("QR cache eviction skipped - all index members malformed, shortCode={}", shortCode);
+                return;
+            }
 
             // Delete the keys and index
             qrRedisTemplate.delete(qrKeys);
             stringRedisTemplate.delete(indexKey);
 
             log.debug(
-                    "QR cache evicted - shortCode={}, count={}",
+                    "QR cache evicted - shortCode={}, evicted={}, skipped={}",
                     shortCode,
-                    qrKeys.size()
+                    qrKeys.size(),
+                    sizes.size() - qrKeys.size()
             );
 
         } catch (RedisConnectionFailureException ex) {
