@@ -202,12 +202,10 @@ public class QrCodeServiceImpl implements QrCodeService {
         }
 
         // Block QR generation for expired URLs
+        LocalDateTime now = LocalDateTime.now();
         if (shortUrl.getExpiresAt() != null
-                && shortUrl.getExpiresAt().isBefore(LocalDateTime.now())) {
-
-            throw new UrlExpiredException(
-                    "Short URL is expired"
-            );
+                && !shortUrl.getExpiresAt().isAfter(now)) {
+            throw new UrlExpiredException("Short URL is expired");
         }
 
         return shortUrl;
