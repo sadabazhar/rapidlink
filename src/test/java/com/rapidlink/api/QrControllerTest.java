@@ -43,6 +43,9 @@ class QrControllerTest {
 
         when(qrProperties.getDefaultSize())
                 .thenReturn(300);
+
+        when(qrProperties.getFormat())
+                .thenReturn("PNG");
     }
 
     @Test
