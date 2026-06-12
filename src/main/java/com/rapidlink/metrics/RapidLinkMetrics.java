@@ -65,6 +65,12 @@ public class RapidLinkMetrics {
     private Counter analyticsDlqCounter;
     private DistributionSummary analyticsBatchSizeSummary;
 
+    private Counter qrRequestCounter;
+    private Counter qrCacheHitCounter;
+    private Counter qrCacheMissCounter;
+    private Counter qrGenerationSuccessCounter;
+    private Counter qrGenerationFailureCounter;
+
     // ── Timers (latency tracking) ────────────────────────────────────────────
     // Automatically tracks count, total time, and percentiles
 
@@ -73,6 +79,7 @@ public class RapidLinkMetrics {
     private Timer clickFetchLatencyTimer;
     private Timer clickFlushLatencyTimer;
     private Timer analyticsBatchProcessingTimer;
+    private Timer qrResponseLatencyTimer;
 
     // ── Gauge (current state) ────────────────────────────────────────────────
     // Holds latest value; read during Prometheus scrape
@@ -167,6 +174,28 @@ public class RapidLinkMetrics {
                 .description("Failure while flushing click counts to DB")
                 .register(registry);
 
+        // QR generation
+
+        qrRequestCounter = Counter.builder("rapidlink.qr.request")
+                .description("QR generation endpoint requests")
+                .register(registry);
+
+        qrGenerationSuccessCounter = Counter.builder("rapidlink.qr.generation.success")
+                .description("QR image generated successfully")
+                .register(registry);
+
+        qrGenerationFailureCounter = Counter.builder("rapidlink.qr.generation.failure")
+                .description("QR image generation failed")
+                .register(registry);
+
+        qrCacheHitCounter = Counter.builder("rapidlink.qr.cache.hit")
+                .description("QR image served from Redis cache")
+                .register(registry);
+
+        qrCacheMissCounter = Counter.builder("rapidlink.qr.cache.miss")
+                .description("QR image not found in Redis cache")
+                .register(registry);
+
 
         // ── latency timer ────────────────────────────────────────────
 
@@ -193,6 +222,11 @@ public class RapidLinkMetrics {
         clickFlushLatencyTimer = Timer.builder("rapidlink.click.flush.latency")
                 .description("Time taken to flush click counts to DB")
                 .publishPercentiles(0.5, 0.95, 0.99)
+                .register(registry);
+
+        qrResponseLatencyTimer = Timer.builder("rapidlink.qr.generation.latency")
+                .description("Time taken to generate QR image")
+                .publishPercentiles(0.50, 0.95, 0.99)
                 .register(registry);
 
         // ── Active URL gauge ──────────────────────────────────────────────────
@@ -309,6 +343,17 @@ public class RapidLinkMetrics {
     // Batch size distribution
     public void recordAnalyticsBatchSize(int batchSize) {analyticsBatchSizeSummary.record(batchSize);}
 
+    // QR code generation
+    public void recordQrRequest() {qrRequestCounter.increment();}
+
+    public void recordQrCacheHit() {qrCacheHitCounter.increment();}
+
+    public void recordQrCacheMiss() {qrCacheMissCounter.increment();}
+
+    public void recordQrGenerationSuccess() {qrGenerationSuccessCounter.increment();}
+
+    public void recordQrGenerationFailure() {qrGenerationFailureCounter.increment();}
+
 
     // Error
     /*
@@ -348,6 +393,8 @@ public class RapidLinkMetrics {
 
     // Batch processing timer
     public <T> T timeAnalyticsBatchProcessing(Supplier<T> operation) {return analyticsBatchProcessingTimer.record(operation);}
+
+    public <T> T timeQrGenerationResponse(Supplier<T> operation) {return qrResponseLatencyTimer.record(operation);}
     // Gauge
     // Update active URL count when URLs are created or expired
     public void setActiveUrlCount(long count) { activeUrlCount.set(count); }

@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 @Configuration
@@ -81,6 +82,37 @@ public class RedisConfig {
         template.setKeySerializer(keySerializer);
         template.setValueSerializer(valueSerializer);
         template.afterPropertiesSet();
+        return template;
+    }
+
+    /**
+     * For QR image byte storage.
+     * Use cases: generated QR codes cached by shortCode and size.
+     * - String keys: human-readable in redis-cli (e.g. qr:abc123:300)
+     * - Raw byte[] values: stores image data directly without JSON serialization
+     * - Optimized for binary content: avoids serialization overhead and reduces memory usage
+     * - Supports fast QR retrieval without regenerating images on every request
+     */
+    @Bean
+    public RedisTemplate<String, byte[]> qrRedisTemplate(
+            RedisConnectionFactory connectionFactory) {
+
+        RedisTemplate<String, byte[]> template =
+                new RedisTemplate<>();
+
+        template.setConnectionFactory(connectionFactory);
+
+        StringRedisSerializer keySerializer =
+                new StringRedisSerializer();
+
+        RedisSerializer<byte[]> valueSerializer =
+                RedisSerializer.byteArray();
+
+        template.setKeySerializer(keySerializer);
+        template.setValueSerializer(valueSerializer);
+
+        template.afterPropertiesSet();
+
         return template;
     }
 

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
  * Handles URL lifecycle operations such as creating short URLs.
  */
 @RestController
-@RequestMapping("api/v1/urls")
+@RequestMapping("api/urls")
 @RequiredArgsConstructor
 public class UrlManagementController {
 
