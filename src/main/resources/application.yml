@@ -96,8 +96,9 @@ management:
             # p95 → slow users
             # p99 → worst-case latency
 
-# QR code generation configuration
 rapidlink:
+
+  # QR code generation configuration
   base-url: http://localhost:8080/
   qr:
     default-size: 300
@@ -105,3 +106,10 @@ rapidlink:
     max-size: 1000
     format: PNG
     cache-ttl: 7d
+
+  security:
+    # JWT Configuration
+    jwt:
+      secret: ${JWT_SECRET:3c05850f27b36b9dc15f3e9bea3f481c}
+      access-token-expiration: ${JWT_ACCESS_EXPIRATION:15m}
+      refresh-token-expiration: ${JWT_REFRESH_EXPIRATION:7d}
