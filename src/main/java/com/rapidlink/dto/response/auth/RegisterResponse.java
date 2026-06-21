@@ -1,8 +1,6 @@
 package com.rapidlink.dto.response.auth;
 
 import com.rapidlink.enums.Role;
-
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 public record RegisterResponse(
@@ -15,8 +13,6 @@ public record RegisterResponse(
 
         String email,
 
-        Role role,
-
-        LocalDateTime createdAt
+        Role role
 
 ) {}
