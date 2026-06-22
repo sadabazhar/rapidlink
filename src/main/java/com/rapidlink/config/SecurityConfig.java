@@ -1,7 +1,11 @@
 package com.rapidlink.config;
 
+import com.rapidlink.security.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -51,5 +55,38 @@ public class SecurityConfig {
                 );
 
         return http.build();
+    }
+
+    /**
+     * Configures how Spring Security authenticates users.
+     * It uses our CustomUserDetailsService to load users
+     * and PasswordEncoder to verify passwords.
+     */
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider(
+            CustomUserDetailsService userDetailsService,
+            PasswordEncoder passwordEncoder) {
+
+        // Load user details from the database
+        DaoAuthenticationProvider provider =
+                new DaoAuthenticationProvider();
+
+        // Compare the raw password with the stored password hash
+        provider.setUserDetailsService(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+
+        return provider;
+    }
+
+    /**
+     * Exposes Spring Security's AuthenticationManager as a bean.
+     * It is used to authenticate a user's email and password during login.
+     */
+    @Bean
+    public AuthenticationManager authenticationManager(
+            AuthenticationConfiguration configuration)
+            throws Exception {
+
+        return configuration.getAuthenticationManager();
     }
 }
