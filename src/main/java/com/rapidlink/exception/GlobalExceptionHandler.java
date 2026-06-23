@@ -10,6 +10,11 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -128,6 +133,51 @@ public class GlobalExceptionHandler {
         );
 
         return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    /**
+     * Handles authentication failures from Spring Security.
+     * Example: invalid credentials, locked account, disabled account.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthenticationException(
+            AuthenticationException ex,
+            HttpServletRequest req
+    ) {
+
+        HttpStatus status;
+        String message;
+
+        if (ex instanceof BadCredentialsException) {
+            status = HttpStatus.UNAUTHORIZED;
+            message = "Invalid email or password.";
+        } else if (ex instanceof LockedException) {
+            status = HttpStatus.LOCKED;
+            message = "Your account has been locked. Please contact support.";
+        } else if (ex instanceof DisabledException) {
+            status = HttpStatus.FORBIDDEN;
+            message = "Your account has been disabled. Please contact support.";
+        } else {
+            status = HttpStatus.UNAUTHORIZED;
+            message = "Authentication failed.";
+        }
+
+        log.warn(
+                "Authentication failed at path={}: {} ({})",
+                req.getRequestURI(),
+                ex.getMessage(),
+                ex.getClass().getSimpleName()
+        );
+
+        ErrorResponse response = new ErrorResponse(
+                LocalDateTime.now(),
+                status.value(),
+                status.getReasonPhrase(),
+                message,
+                req.getRequestURI()
+        );
+
+        return ResponseEntity.status(status).body(response);
     }
 
     /**

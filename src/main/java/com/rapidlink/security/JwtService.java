@@ -234,6 +234,16 @@ public class JwtService {
         return extractAllClaims(token).getExpiration();
     }
 
+    /**
+     * Returns the remaining lifetime of the token in seconds.
+     *
+     * @param token JWT to inspect
+     * @return remaining lifetime in seconds
+     */
+    public long getTokenExpirationInSeconds(String token) {
+        return (extractExpiration(token).getTime() - System.currentTimeMillis()) / 1000;
+    }
+
 
     /**
      * Parses the JWT and returns all its claims.
