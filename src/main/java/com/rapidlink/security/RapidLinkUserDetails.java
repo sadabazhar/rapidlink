@@ -8,6 +8,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Wraps the application's User object so Spring Security can use it
@@ -22,6 +23,21 @@ public final class RapidLinkUserDetails implements UserDetails {
      *  Returns the original User object.
      */
     private final User user;
+
+
+    /**
+     * Returns the unique identifier of the authenticated user.
+     *
+     * <p>This is primarily used by JWT-based authentication, where
+     * tokens store the user's ID as the subject. Exposing the ID
+     * directly avoids leaking the entire {@link User} entity when
+     * application code needs to identify the currently authenticated user.
+     *
+     * @return the user's unique ID
+     */
+    public UUID getUserId() {
+        return user.getId();
+    }
 
     /**
      * Returns the user's email, which is used as the login identifier.
