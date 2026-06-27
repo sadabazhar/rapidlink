@@ -4,8 +4,9 @@ import com.rapidlink.config.RapidLinkProperties;
 import com.rapidlink.entity.User;
 import com.rapidlink.enums.Role;
 import com.rapidlink.enums.TokenType;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
+import com.rapidlink.exception.JwtTokenExpiredException;
+import com.rapidlink.exception.JwtTokenInvalidException;
+import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -112,138 +113,105 @@ public class JwtService {
     // -------------------- Token Validation --------------------
 
     /**
-     * Checks whether the given access token is valid for the user.
+     * Validates an access token for the given user.
      *
-     * <p>A token is valid if:
-     * <ul>
-     *     <li>the user ID matches,</li>
-     *     <li>the token type is ACCESS,</li>
-     *     <li>the token has not expired.</li>
-     * </ul>
-     *
-     * @param token access token
+     * @param jwt parsed JWT
      * @param user expected user
-     * @return {@code true} if the token is valid
+     * @throws JwtTokenInvalidException if the token is invalid
+     * @throws JwtTokenExpiredException if the token has expired
      */
-    public boolean isAccessTokenValid(String token, User user) {
-        return isTokenValid(token, user, TokenType.ACCESS);
+    public void validateAccessToken(ParsedJwt jwt, User user) {
+        validateToken(jwt, user, TokenType.ACCESS);
     }
 
     /**
-     * Checks whether the given refresh token is valid for the user.
+     * Validates a refresh token for the given user.
      *
-     * <p>A token is valid if:
-     * <ul>
-     *     <li>the user ID matches,</li>
-     *     <li>the token type is REFRESH,</li>
-     *     <li>the token has not expired.</li>
-     * </ul>
-     *
-     * @param token refresh token
+     * @param jwt parsed JWT
      * @param user expected user
-     * @return {@code true} if the token is valid
+     * @throws JwtTokenInvalidException if the token is invalid
+     * @throws JwtTokenExpiredException if the token has expired
      */
-    public boolean isRefreshTokenValid(String token, User user) {
-        return isTokenValid(token, user, TokenType.REFRESH);
+    public void validateRefreshToken(ParsedJwt jwt, User user) {
+        validateToken(jwt, user, TokenType.REFRESH);
     }
 
     /**
-     * Performs common validation for JWTs.
+     * Validates a parsed JWT for the given user.
      *
-     * @param token JWT to validate
+     * @param jwt parsed JWT
      * @param user expected user
-     * @param expectedTokenType required token type
-     * @return {@code true} if the token is valid
+     * @param expectedType required token type
+     * @throws JwtTokenInvalidException if the token is invalid
+     * @throws JwtTokenExpiredException if the token has expired
      */
-    private boolean isTokenValid(
-            String token,
+    private void validateToken(
+            ParsedJwt jwt,
             User user,
-            TokenType expectedTokenType
+            TokenType expectedType
     ) {
+        if (!user.getId().equals(jwt.userId())) {
+            throw new JwtTokenInvalidException("Token does not belong to the user.");
+        }
 
-        return user.getId().equals(extractUserId(token))
-                && expectedTokenType == extractTokenType(token)
-                && !isTokenExpired(token);
+        if (jwt.tokenType() != expectedType) {
+            throw new JwtTokenInvalidException("Unexpected token type.");
+        }
+
+        if (jwt.expiration().isBefore(Instant.now())) {
+            throw new JwtTokenExpiredException("JWT expired.");
+        }
     }
 
+
+    // -------------------- Token Parsing --------------------
+
     /**
-     * Checks whether the token has expired.
+     * Returns the configured access token lifetime in seconds.
      *
-     * @param token JWT to inspect
-     * @return {@code true} if the token is expired
+     * @return access token lifetime in seconds
      */
-    private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
-    }
-
-
-    // -------------------- Claim Extraction --------------------
-
-    /**
-     * Extracts the user's ID from the JWT.
-     *
-     * @param token JWT to inspect
-     * @return user's ID
-     */
-    public UUID extractUserId(String token) {
-        return UUID.fromString(extractAllClaims(token).getSubject());
+    public long getAccessTokenExpirationInSeconds() {
+        return jwtProperties.getAccessTokenExpiration().toSeconds();
     }
 
     /**
-     * Extracts the user's email from the JWT.
+     * Returns the remaining lifetime of a parsed JWT in seconds.
      *
-     * @param token JWT to inspect
-     * @return user's email
-     */
-    public String extractEmail(String token) {
-        return extractAllClaims(token).get(JwtClaims.EMAIL, String.class);
-    }
-
-    /**
-     * Extracts the user's role from the JWT.
-     *
-     * @param token JWT to inspect
-     * @return user's role
-     */
-    public Role extractUserRole(String token) {
-
-        String role = extractAllClaims(token).get(JwtClaims.ROLE, String.class);
-        return Role.valueOf(role);
-    }
-
-
-    /**
-     * Extracts the token's type from the JWT.
-     *
-     * @param token JWT to inspect
-     * @return token's type
-     */
-    public TokenType extractTokenType(String token) {
-
-        String tokenType = extractAllClaims(token).get(JwtClaims.TOKEN_TYPE, String.class);
-        return TokenType.valueOf(tokenType);
-    }
-
-    /**
-     * Extracts the token's expiration from the JWT.
-     *
-     * @param token JWT to inspect
-     * @return expiration date
-     */
-    public Date extractExpiration(String token) {
-        return extractAllClaims(token).getExpiration();
-    }
-
-    /**
-     * Returns the remaining lifetime of the token in seconds.
-     *
-     * @param token JWT to inspect
+     * @param jwt parsed JWT
      * @return remaining lifetime in seconds
      */
-    public long getTokenExpirationInSeconds(String token) {
-        return (extractExpiration(token).getTime() - System.currentTimeMillis()) / 1000;
+    public long getTokenExpirationInSeconds(ParsedJwt jwt) {
+        return Duration.between(
+                Instant.now(),
+                jwt.expiration()
+        ).toSeconds();
     }
 
+    /**
+     * Parses and validates a JWT.
+     *
+     * <p>The token signature is verified before its claims are converted
+     * into a {@link ParsedJwt}. If the token is malformed, expired, or
+     * has an invalid signature, an appropriate exception is thrown.
+     *
+     * @param token JWT to parse
+     * @return immutable representation of the validated JWT
+     */
+    public ParsedJwt parse(String token) {
+
+        Claims claims = parseClaims(token);
+
+        return new ParsedJwt(
+                UUID.fromString(claims.getSubject()),
+                claims.get(JwtClaims.EMAIL, String.class),
+                Role.valueOf(claims.get(JwtClaims.ROLE, String.class)),
+                TokenType.valueOf(
+                        claims.get(JwtClaims.TOKEN_TYPE, String.class)
+                ),
+                claims.getExpiration().toInstant()
+        );
+    }
 
     /**
      * Parses the JWT and returns all its claims.
@@ -253,13 +221,29 @@ public class JwtService {
      * @param token JWT to parse
      * @return parsed claims
      */
-    private Claims extractAllClaims(String token) {
+    private Claims parseClaims(String token) {
 
-        return Jwts.parser()
-                .verifyWith(signingKey)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+        try {
+
+            return Jwts.parser()
+                    .verifyWith(signingKey)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+        } catch (ExpiredJwtException ex) {
+
+            throw new JwtTokenExpiredException("JWT access token expired");
+
+        } catch (
+                SignatureException |
+                MalformedJwtException |
+                UnsupportedJwtException |
+                IllegalArgumentException ex
+        ) {
+
+            throw new JwtTokenInvalidException("Invalid JWT received");
+        }
     }
 
 }

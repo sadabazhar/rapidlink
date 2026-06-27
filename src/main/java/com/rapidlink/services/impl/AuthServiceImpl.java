@@ -5,10 +5,7 @@ import com.rapidlink.dto.request.auth.RegisterRequest;
 import com.rapidlink.dto.response.auth.LoginResponse;
 import com.rapidlink.dto.response.auth.RegisterResponse;
 import com.rapidlink.entity.User;
-import com.rapidlink.exception.AccountDisabledException;
 import com.rapidlink.exception.EmailAlreadyExistsException;
-import com.rapidlink.exception.EmailNotVerifiedException;
-import com.rapidlink.exception.UserNotFoundException;
 import com.rapidlink.mapper.UserMapper;
 import com.rapidlink.repository.UserRepository;
 import com.rapidlink.security.JwtService;
@@ -19,7 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -121,7 +117,7 @@ public class AuthServiceImpl implements AuthService {
         String refreshToken = jwtService.generateRefreshToken(user);
 
         // Access token lifetime (in seconds).
-        long expiresIn = jwtService.getTokenExpirationInSeconds(accessToken);
+        long expiresIn = jwtService.getAccessTokenExpirationInSeconds();
 
         log.info("User logged in successfully. userId={}, email={}",
                 user.getId(), user.getEmail());

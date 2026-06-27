@@ -1,6 +1,5 @@
 package com.rapidlink.security;
 
-import com.rapidlink.enums.TokenType;
 import com.rapidlink.exception.JwtTokenExpiredException;
 import com.rapidlink.exception.JwtTokenInvalidException;
 import jakarta.servlet.FilterChain;
@@ -19,7 +18,6 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
-import java.util.UUID;
 
 /**
  * Spring Security filter responsible for authenticating requests
@@ -77,101 +75,86 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
 
             /*
-             * Only access tokens are allowed to authenticate requests.
+             * Parse and validate the JWT signature.
              *
-             * Refresh tokens are intended exclusively for obtaining
-             * new access tokens and must never be accepted for
-             * resource access.
-             *
-             * Validate the token type before performing any database
-             * lookup to avoid unnecessary work.
+             * The returned ParsedJwt contains all claims required for
+             * authentication, avoiding repeated JWT parsing.
              */
-            if (jwtService.extractTokenType(jwt) != TokenType.ACCESS) {
-
-                log.debug(
-                        "Rejected non-access token for uri={}",
-                        request.getRequestURI()
-                );
-
-                filterChain.doFilter(request, response);
-                return;
-            }
-
-            /*
-             * The JWT subject stores the user's unique identifier.
-             */
-            UUID userId = jwtService.extractUserId(jwt);
+            ParsedJwt parsedJwt = jwtService.parse(jwt);
 
             /*
              * Load the authenticated user.
              *
              * The user may have been deleted after the token was issued.
              */
-            RapidLinkUserDetails userDetails = userDetailsService.loadUserById(userId);
+            RapidLinkUserDetails userDetails =
+                    userDetailsService.loadUserById(parsedJwt.userId());
 
             /*
-             * Verify:
-             * - token signature
-             * - token expiration
-             * - token type is ACCESS
-             * - token belongs to the expected user
+             * Validate that:
+             * - the token belongs to the user
+             * - the token is an ACCESS token
+             * - the token has not expired
+             *
+             * An exception is thrown if validation fails.
              */
-            if (jwtService.isAccessTokenValid(
-                    jwt,
+            jwtService.validateAccessToken(
+                    parsedJwt,
                     userDetails.getUser()
-            )) {
+            );
 
-                /*
-                 * Create Spring Security authentication object.
-                 *
-                 * Credentials are set to null because the user has
-                 * already been authenticated via JWT.
-                 */
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails,
-                                null,
-                                userDetails.getAuthorities()
-                        );
+            /*
+             * Create Spring Security authentication object.
+             *
+             * Credentials are set to null because the user has
+             * already been authenticated using the JWT.
+             */
+            UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(
+                            userDetails,
+                            null,
+                            userDetails.getAuthorities()
+                    );
 
-                /*
-                 * Attach request-specific details such as:
-                 * - client IP
-                 * - session information
-                 */
-                authentication.setDetails(
-                        new WebAuthenticationDetailsSource()
-                                .buildDetails(request)
-                );
+            /*
+             * Attach request-specific details such as:
+             * - client IP
+             * - session information
+             */
+            authentication.setDetails(
+                    new WebAuthenticationDetailsSource()
+                            .buildDetails(request)
+            );
 
-                /*
-                 * Store the authenticated user in the SecurityContext.
-                 *
-                 * From this point onward Spring Security considers
-                 * the request authenticated.
-                 */
-                SecurityContextHolder.getContext()
-                        .setAuthentication(authentication);
+            /*
+             * Store the authenticated user in the SecurityContext.
+             *
+             * From this point onward, Spring Security considers
+             * the request authenticated.
+             */
+            SecurityContextHolder.getContext()
+                    .setAuthentication(authentication);
 
+            log.debug(
+                    "JWT authentication successful for userId={} uri={}",
+                    parsedJwt.userId(),
+                    request.getRequestURI()
+            );
 
-                log.debug(
-                        "JWT authentication successful for userId={} uri={}",
-                        userId,
-                        request.getRequestURI()
-                );
-            }
+        } catch (JwtTokenExpiredException | JwtTokenInvalidException | UsernameNotFoundException ex) {
 
-        } catch (JwtTokenExpiredException ex) {
-            // Token is valid but expired (client should refresh)
-            log.debug("JWT access token expired");
+            /*
+             * Store the authentication failure so the AuthenticationEntryPoint
+             * can return an appropriate 401 response.
+             */
+            request.setAttribute(
+                    "jwt.error",
+                    ex.getMessage()
+            );
 
-        } catch (JwtTokenInvalidException ex) {
-            // Token is malformed or tampered with
-            log.warn("Invalid JWT received");
+            // Ensure no authentication is stored for this request.
+            SecurityContextHolder.clearContext();
 
-        } catch (UsernameNotFoundException ex) {
-            // Token references a user that no longer exists
-            log.debug("JWT user not found");
         }
 
         // Continue processing the request.

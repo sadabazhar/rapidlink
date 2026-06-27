@@ -1,8 +1,12 @@
 package com.rapidlink.config;
 
 import com.rapidlink.security.CustomUserDetailsService;
+import com.rapidlink.security.JwtAuthenticationEntryPoint;
+import com.rapidlink.security.JwtAuthenticationFilter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -12,12 +16,17 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
  * Central Spring Security configuration.
  */
 @Configuration
+@RequiredArgsConstructor
 public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final JwtAuthenticationEntryPoint authenticationEntryPoint;
 
     /**
      * Password encoder used to securely hash user passwords before storing
@@ -31,10 +40,12 @@ public class SecurityConfig {
     /**
      * Configures the Spring Security filter chain.
      *
-     * Current configuration:
-     * - Disables CSRF (JWT-based REST API)
-     * - Uses stateless session management
-     * - Allows all requests temporarily until JWT authentication is implemented
+     * Configuration:
+     * - Disables CSRF for the stateless REST API
+     * - Uses JWT-based authentication
+     * - Does not create HTTP sessions
+     * - Exposes selected public endpoints
+     * - Requires authentication for all other requests
      */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -48,10 +59,36 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
 
-                // Allow all endpoints temporarily.
-                // This will be replaced with authenticated access after JWT is implemented.
-                .authorizeHttpRequests(auth ->
-                        auth.anyRequest().permitAll()
+                .authorizeHttpRequests(auth -> auth
+
+                        // Public authentication endpoints.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/**").permitAll()
+
+                        // Public URL redirection endpoint.
+                        // Anyone with a short URL can access the destination.
+                        .requestMatchers(HttpMethod.GET, "/{shortCode}").permitAll()
+
+                        // Allow anonymous users to create demo short URLs.
+                        .requestMatchers(HttpMethod.POST, "/api/urls").permitAll()
+
+                        // Actuator endpoints used for monitoring and health checks.
+                        .requestMatchers("/actuator/**").permitAll()
+
+                        // All remaining endpoints require authentication.
+                        .anyRequest().authenticated()
+                )
+
+                // Handle authentication failures for protected resources.
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                )
+
+                // Register JWT authentication filter.
+                // It runs before UsernamePasswordAuthenticationFilter and
+                // populates the SecurityContext from the JWT token.
+                .addFilterBefore(
+                        jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class
                 );
 
         return http.build();
