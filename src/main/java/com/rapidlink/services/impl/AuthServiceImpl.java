@@ -67,6 +67,9 @@ public class AuthServiceImpl implements AuthService {
         // Create a new user with a securely hashed password.
         User user = UserMapper.toEntity(request, passwordEncoder.encode(request.password()));
 
+        // Persist the normalized email.
+        user.setEmail(email);
+
         // Persist the user and obtain generated fields such as ID and timestamps.
         User savedUser = userRepository.save(user);
 

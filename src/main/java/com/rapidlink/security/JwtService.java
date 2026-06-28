@@ -8,8 +8,6 @@ import com.rapidlink.exception.JwtTokenExpiredException;
 import com.rapidlink.exception.JwtTokenInvalidException;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -23,25 +21,21 @@ import java.util.UUID;
  * used for user authentication.
  */
 @Service
-@RequiredArgsConstructor
 public class JwtService {
 
-    private final RapidLinkProperties rapidLinkProperties;
-    private RapidLinkProperties.Jwt jwtProperties;
+    private final RapidLinkProperties.Jwt jwtProperties;
 
     /**
      * Secret key used to sign and verify JWTs.
      *
      * <p>The key is created once during startup and reused for all JWT operations.
      */
-    private SecretKey signingKey;
 
-    @PostConstruct
-    void initializeSigningKey() {
+    private final SecretKey signingKey;
 
-        jwtProperties = rapidLinkProperties.getSecurity().getJwt();
-
-        signingKey = Keys.hmacShaKeyFor(
+    public JwtService(RapidLinkProperties rapidLinkProperties) {
+        this.jwtProperties = rapidLinkProperties.getSecurity().getJwt();
+        this.signingKey = Keys.hmacShaKeyFor(
                 jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8)
         );
     }
