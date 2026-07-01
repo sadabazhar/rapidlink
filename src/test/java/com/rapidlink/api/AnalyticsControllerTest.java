@@ -5,6 +5,7 @@ import com.rapidlink.dto.response.analytics.AnalyticsOverviewResponse;
 import com.rapidlink.exception.GlobalExceptionHandler;
 import com.rapidlink.exception.ShortUrlNotFoundException;
 import com.rapidlink.metrics.RapidLinkMetrics;
+import com.rapidlink.security.JwtAuthenticationFilter;
 import com.rapidlink.services.AnalyticsQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,9 @@ class AnalyticsControllerTest {
 
     @MockitoBean
     private RapidLinkMetrics metrics;
+
+    @MockitoBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
 
     private AnalyticsOverviewResponse analyticsResponse;
     private UUID shortUrlId;
