@@ -114,5 +114,33 @@ public class RapidLinkProperties {
 
         @NotNull
         private Duration refreshTokenExpiration;
+
+        /**
+         * Validates that the configured access token expiration is positive.
+         *
+         * This check runs during configuration binding and prevents the
+         * application from starting with an access token lifetime of
+         * zero or a negative duration.
+         */
+        @AssertTrue(message = "security.jwt.accessTokenExpiration must be positive")
+        public boolean isAccessTokenExpirationPositive() {
+            return accessTokenExpiration != null
+                    && !accessTokenExpiration.isZero()
+                    && !accessTokenExpiration.isNegative();
+        }
+
+        /**
+         * Validates that the configured refresh token expiration is positive.
+         *
+         * This check runs during configuration binding and prevents the
+         * application from starting with a refresh token lifetime of
+         * zero or a negative duration.
+         */
+        @AssertTrue(message = "security.jwt.refreshTokenExpiration must be positive")
+        public boolean isRefreshTokenExpirationPositive() {
+            return refreshTokenExpiration != null
+                    && !refreshTokenExpiration.isZero()
+                    && !refreshTokenExpiration.isNegative();
+        }
     }
 }
