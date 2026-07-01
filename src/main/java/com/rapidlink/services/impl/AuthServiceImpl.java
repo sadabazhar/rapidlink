@@ -13,13 +13,13 @@ import com.rapidlink.security.RapidLinkUserDetails;
 import com.rapidlink.services.AuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.util.Locale;
 
 /**
  * Handles authentication-related business logic such as
@@ -39,7 +39,6 @@ public class AuthServiceImpl implements AuthService {
      * Registers a new user account.
      *
      * Registration flow:
-     * - Normalize the email
      * - Check if the email is already registered
      * - Hash the password
      * - Save the user
@@ -49,8 +48,7 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public RegisterResponse register(RegisterRequest request) {
 
-        // Normalize the email to avoid duplicate accounts caused by letter casing.
-        String email = request.email().trim().toLowerCase(Locale.ROOT);
+        String email = request.email();
 
         log.info("Registration requested for email={}", email);
 
@@ -67,17 +65,25 @@ public class AuthServiceImpl implements AuthService {
         // Create a new user with a securely hashed password.
         User user = UserMapper.toEntity(request, passwordEncoder.encode(request.password()));
 
-        // Persist the normalized email.
-        user.setEmail(email);
+        try {
 
-        // Persist the user and obtain generated fields such as ID and timestamps.
-        User savedUser = userRepository.save(user);
+            // Persist the user and obtain generated fields such as ID and timestamps.
+            User savedUser = userRepository.save(user);
 
-        log.info("User registered successfully. userId={}, email={}",
-                savedUser.getId(), savedUser.getEmail());
+            log.info("User registered successfully. userId={}, email={}",
+                    savedUser.getId(), savedUser.getEmail());
 
-        // Return the registration result without exposing the password.
-        return UserMapper.toRegisterResponse(savedUser);
+            // Return the registration result without exposing the password.
+            return UserMapper.toRegisterResponse(savedUser);
+
+        } catch (DataIntegrityViolationException ex) {
+
+            log.warn("Registration failed due to duplicate email. email={}", email);
+
+            throw new EmailAlreadyExistsException(
+                    "An account with this email already exists."
+            );
+        }
     }
 
     /**
@@ -91,8 +97,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResponse login(LoginRequest request) {
 
-        // Normalize the email
-        String email = request.email().trim().toLowerCase(Locale.ROOT);
+        String email = request.email();
 
         log.info("Login requested for email={}", email);
 

@@ -186,8 +186,9 @@ public class JwtService {
      * Parses and validates a JWT.
      *
      * <p>The token signature is verified before its claims are converted
-     * into a {@link ParsedJwt}. If the token is malformed, expired, or
-     * has an invalid signature, an appropriate exception is thrown.
+     * into a {@link ParsedJwt}. If the token is malformed, expired,
+     * contains invalid claim values, or has an invalid signature,
+     * an appropriate exception is thrown.
      *
      * @param token JWT to parse
      * @return immutable representation of the validated JWT
@@ -196,15 +197,22 @@ public class JwtService {
 
         Claims claims = parseClaims(token);
 
-        return new ParsedJwt(
-                UUID.fromString(claims.getSubject()),
-                claims.get(JwtClaims.EMAIL, String.class),
-                Role.valueOf(claims.get(JwtClaims.ROLE, String.class)),
-                TokenType.valueOf(
-                        claims.get(JwtClaims.TOKEN_TYPE, String.class)
-                ),
-                claims.getExpiration().toInstant()
-        );
+        try {
+
+            return new ParsedJwt(
+                    UUID.fromString(claims.getSubject()),
+                    claims.get(JwtClaims.EMAIL, String.class),
+                    Role.valueOf(claims.get(JwtClaims.ROLE, String.class)),
+                    TokenType.valueOf(
+                            claims.get(JwtClaims.TOKEN_TYPE, String.class)
+                    ),
+                    claims.getExpiration().toInstant()
+            );
+
+        } catch (IllegalArgumentException ex) {
+
+            throw new JwtTokenInvalidException("Invalid JWT claims");
+        }
     }
 
     /**

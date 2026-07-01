@@ -9,6 +9,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.AccountStatusException;
+import org.springframework.security.authentication.AccountStatusUserDetailsChecker;
+import org.springframework.security.core.userdetails.UserDetailsChecker;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.util.StringUtils;
 import org.springframework.http.HttpHeaders;
@@ -44,6 +47,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
+
+    private final UserDetailsChecker userDetailsChecker = new AccountStatusUserDetailsChecker();
 
     @Override
     protected void doFilterInternal(
@@ -89,6 +94,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
              */
             RapidLinkUserDetails userDetails =
                     userDetailsService.loadUserById(parsedJwt.userId());
+
+            /*
+             * Re-check the user's account status since it may have changed
+             * after the JWT was issued.
+             */
+            userDetailsChecker.check(userDetails);
 
             /*
              * Validate that:
@@ -141,7 +152,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     request.getRequestURI()
             );
 
-        } catch (JwtTokenExpiredException | JwtTokenInvalidException | UsernameNotFoundException ex) {
+        } catch (JwtTokenExpiredException
+                 | JwtTokenInvalidException
+                 | UsernameNotFoundException
+                 | AccountStatusException ex) {
 
             /*
              * Store the authentication failure so the AuthenticationEntryPoint

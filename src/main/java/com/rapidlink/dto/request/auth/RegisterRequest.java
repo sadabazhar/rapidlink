@@ -4,6 +4,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.Locale;
+
 public record RegisterRequest(
 
         @NotBlank(message = "First name is required")
@@ -20,4 +22,12 @@ public record RegisterRequest(
         @Size(min = 8, message = "Password must be at least 8 characters")
         String password
 
-) {}
+) {
+
+    // Normalize email before Bean Validation
+    public RegisterRequest {
+        if (email != null) {
+            email = email.trim().toLowerCase(Locale.ROOT);
+        }
+    }
+}
