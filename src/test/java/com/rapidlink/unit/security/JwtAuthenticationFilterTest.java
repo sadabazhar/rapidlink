@@ -186,6 +186,8 @@ class JwtAuthenticationFilterTest {
         SecurityContextHolder.getContext()
                 .setAuthentication(existingAuthentication);
 
+        setBearerToken("valid-token");
+
         filter.doFilter(request, response, filterChain);
 
         assertThat(SecurityContextHolder.getContext().getAuthentication())

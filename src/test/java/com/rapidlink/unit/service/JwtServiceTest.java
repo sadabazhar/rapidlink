@@ -170,8 +170,11 @@ class JwtServiceTest {
 
         String accessToken = jwtService.generateAccessToken(user);
 
-        String invalidToken = accessToken.substring(0, accessToken.length() - 1)
-                + (accessToken.endsWith("A") ? "B" : "A");
+        String[] parts = accessToken.split("\\.");
+
+        parts[2] = (parts[2].startsWith("A") ? "B" : "A") + parts[2].substring(1);
+
+        String invalidToken = String.join(".", parts);
 
         assertThatThrownBy(() ->
                 jwtService.parse(invalidToken)
