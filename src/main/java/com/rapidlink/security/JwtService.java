@@ -186,9 +186,9 @@ public class JwtService {
      * Parses and validates a JWT.
      *
      * <p>The token signature is verified before its claims are converted
-     * into a {@link ParsedJwt}. If the token is malformed, expired,
+     * into a {@link ParsedJwt}. If the token is expired, malformed,
      * contains invalid claim values, or has an invalid signature,
-     * an appropriate exception is thrown.
+     * an appropriate JWT exception is thrown.
      *
      * @param token JWT to parse
      * @return immutable representation of the validated JWT
@@ -199,17 +199,31 @@ public class JwtService {
 
         try {
 
+            String subject = claims.getSubject();
+            String email = claims.get(JwtClaims.EMAIL, String.class);
+            String role = claims.get(JwtClaims.ROLE, String.class);
+            String tokenType = claims.get(JwtClaims.TOKEN_TYPE, String.class);
+            Date expiration = claims.getExpiration();
+
+            if (
+                    subject == null ||
+                            email == null ||
+                            role == null ||
+                            tokenType == null ||
+                            expiration == null
+            ) {
+                throw new JwtTokenInvalidException("Invalid JWT claims");
+            }
+
             return new ParsedJwt(
-                    UUID.fromString(claims.getSubject()),
-                    claims.get(JwtClaims.EMAIL, String.class),
-                    Role.valueOf(claims.get(JwtClaims.ROLE, String.class)),
-                    TokenType.valueOf(
-                            claims.get(JwtClaims.TOKEN_TYPE, String.class)
-                    ),
-                    claims.getExpiration().toInstant()
+                    UUID.fromString(subject),
+                    email,
+                    Role.valueOf(role),
+                    TokenType.valueOf(tokenType),
+                    expiration.toInstant()
             );
 
-        } catch (IllegalArgumentException ex) {
+        } catch (IllegalArgumentException | NullPointerException ex) {
 
             throw new JwtTokenInvalidException("Invalid JWT claims");
         }
