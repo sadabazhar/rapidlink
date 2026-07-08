@@ -32,6 +32,19 @@ spring:
 server:
   port: 0   # Use random port to avoid conflicts during tests
 
+
+rapidlink:
+
+  # Test base URL
+  base-url: http://localhost:8080/
+
+  security:
+    jwt:
+      # Fake secret used only during automated tests
+      secret: test-jwt-secret-key-for-rapidlink-testing-1234567890
+      access-token-expiration: 15m
+      refresh-token-expiration: 7d
+
 logging:
   level:
     root: warn    # Reduce log noise, show only important messages

@@ -3,6 +3,7 @@ package com.rapidlink.api;
 import com.rapidlink.config.RapidLinkProperties;
 import com.rapidlink.controller.QrController;
 import com.rapidlink.metrics.RapidLinkMetrics;
+import com.rapidlink.security.JwtAuthenticationFilter;
 import com.rapidlink.services.QrCodeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,9 @@ class QrControllerTest {
 
     @MockitoBean
     private RapidLinkMetrics rapidLinkMetrics;
+
+    @MockitoBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @BeforeEach
     void setUp() {

@@ -42,4 +42,6 @@ build/
 
 # Environment
 .env
+.env.*
+!.env.example
 application-local.yml

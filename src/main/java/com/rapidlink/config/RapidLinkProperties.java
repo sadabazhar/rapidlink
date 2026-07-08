@@ -1,10 +1,7 @@
 package com.rapidlink.config;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.AssertTrue;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.*;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -13,12 +10,17 @@ import org.springframework.validation.annotation.Validated;
 import java.time.Duration;
 
 /**
- * Configuration properties for QR code generation.
+ * Centralized configuration properties for the RapidLink application.
  *
- * Maps values from application.yml using the prefix: rapidlink
+ * <p>Maps properties defined under the {@code rapidlink} prefix in
+ * {@code application.yml}. The configuration is organized into
+ * feature-specific nested classes to keep related settings together.
  *
- * Default values are provided as fallback values and can be
- * overridden from application.yml without changing source code.
+ * <p>Current configuration groups:
+ * <ul>
+ *   <li>QR code generation</li>
+ *   <li>Security (JWT authentication)</li>
+ * </ul>
  */
 @Getter
 @Setter
@@ -31,6 +33,16 @@ public class RapidLinkProperties {
     @Valid
     private Qr qr = new Qr();
 
+    @Valid
+    private Security security = new Security();
+
+    /**
+     * Configuration properties for QR code generation.
+     *
+     * <p>Defines default QR code generation settings including image size,
+     * output format, and cache duration. Validation ensures all configured
+     * values remain within acceptable bounds.
+     */
     @Getter
     @Setter
     public static class Qr {
@@ -63,6 +75,72 @@ public class RapidLinkProperties {
         @AssertTrue(message = "qr.cacheTtl must be positive")
         public boolean isCacheTtlPositive() {
             return cacheTtl != null && !cacheTtl.isZero() && !cacheTtl.isNegative();
+        }
+    }
+
+    /**
+     * Security-related configuration.
+     *
+     * <p>Groups authentication and authorization settings used throughout
+     * the application.
+     */
+    @Getter
+    @Setter
+    public static class Security {
+
+        @Valid
+        private Jwt jwt = new Jwt();
+    }
+
+    /**
+     * JWT (JSON Web Token) configuration.
+     *
+     * <p>Contains the secret key used to sign JWTs and the expiration
+     * durations for access and refresh tokens.
+     *
+     * <p>These values are typically supplied through environment variables
+     * in production environments.
+     */
+    @Getter
+    @Setter
+    public static class Jwt {
+
+        @NotBlank
+        @Size(min = 32, message = "JWT secret must be at least 32 characters long")
+        private String secret;
+
+        @NotNull
+        private Duration accessTokenExpiration;
+
+        @NotNull
+        private Duration refreshTokenExpiration;
+
+        /**
+         * Validates that the configured access token expiration is positive.
+         *
+         * This check runs during configuration binding and prevents the
+         * application from starting with an access token lifetime of
+         * zero or a negative duration.
+         */
+        @AssertTrue(message = "security.jwt.accessTokenExpiration must be positive")
+        public boolean isAccessTokenExpirationPositive() {
+            return accessTokenExpiration != null
+                    && !accessTokenExpiration.isZero()
+                    && !accessTokenExpiration.isNegative();
+        }
+
+        /**
+         * Validates that the configured refresh token expiration is positive.
+         *
+         * This check runs during configuration binding and prevents the
+         * application from starting with a refresh token lifetime of
+         * zero or a negative duration.
+         */
+        @AssertTrue(message = "security.jwt.refreshTokenExpiration must be positive")
+        public boolean isRefreshTokenExpirationPositive() {
+            return refreshTokenExpiration != null
+                    && !refreshTokenExpiration.isZero()
+                    && !refreshTokenExpiration.isNegative();
         }
     }
 }
